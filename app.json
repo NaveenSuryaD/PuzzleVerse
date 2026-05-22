@@ -7,11 +7,6 @@
     "icon": "./assets/icon.png",
     "scheme": "puzzle-verse-games",
     "userInterfaceStyle": "automatic",
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#0D0D1A"
-    },
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.thinkBig.puzzleverse",
@@ -34,7 +29,15 @@
     },
     "plugins": [
       "expo-router",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#0D0D1A"
+        }
+      ]
     ],
     "extra": {
       "router": {},
