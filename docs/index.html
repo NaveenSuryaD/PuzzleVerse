@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Puzzle Verse Games — Support</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0D0D1A;
+    --surface: #16162A;
+    --surface2: #1E1E35;
+    --brand: #6C63FF;
+    --accent: #FF6584;
+    --cyan: #43E6FC;
+    --text: #F0F0FF;
+    --text2: #9898B8;
+    --text3: #5C5C80;
+    --border: rgba(255,255,255,0.08);
+    --font: 'Nunito', sans-serif;
+  }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 16px;
+    line-height: 1.7;
+    min-height: 100vh;
+  }
+
+  /* background grid pattern */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(108,99,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(108,99,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .wrap { position: relative; z-index: 1; max-width: 720px; margin: 0 auto; padding: 0 24px; }
+
+  /* ── HERO ── */
+  header {
+    padding: 72px 0 56px;
+    text-align: center;
+  }
+
+  .logo-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 80px; height: 80px;
+    border-radius: 24px;
+    background: linear-gradient(135deg, var(--brand), var(--accent));
+    font-size: 40px;
+    margin-bottom: 24px;
+    box-shadow: 0 0 40px rgba(108,99,255,0.35);
+    animation: float 3s ease-in-out infinite;
+  }
+
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50%       { transform: translateY(-8px); }
+  }
+
+  h1 {
+    font-size: clamp(28px, 6vw, 42px);
+    font-weight: 900;
+    letter-spacing: -1px;
+    background: linear-gradient(135deg, #fff 30%, var(--brand));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 12px;
+  }
+
+  .hero-sub {
+    color: var(--text2);
+    font-size: 18px;
+    font-weight: 600;
+  }
+
+  /* ── SECTIONS ── */
+  section { margin-bottom: 56px; }
+
+  .section-label {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--brand);
+    background: rgba(108,99,255,0.12);
+    border: 1px solid rgba(108,99,255,0.25);
+    padding: 4px 12px;
+    border-radius: 999px;
+    margin-bottom: 20px;
+  }
+
+  h2 {
+    font-size: 26px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    margin-bottom: 16px;
+    color: var(--text);
+  }
+
+  p { color: var(--text2); margin-bottom: 12px; }
+  p:last-child { margin-bottom: 0; }
+
+  /* ── FAQ ── */
+  .faq { display: flex; flex-direction: column; gap: 12px; }
+
+  .faq-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px 24px;
+    transition: border-color 0.2s;
+  }
+
+  .faq-item:hover { border-color: rgba(108,99,255,0.3); }
+
+  .faq-q {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 8px;
+  }
+
+  .faq-a { color: var(--text2); font-size: 15px; margin: 0; }
+
+  /* ── CONTACT ── */
+  .contact-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 32px;
+    text-align: center;
+  }
+
+  .contact-icon {
+    font-size: 40px;
+    margin-bottom: 16px;
+    display: block;
+  }
+
+  .contact-card h3 {
+    font-size: 20px;
+    font-weight: 800;
+    margin-bottom: 8px;
+  }
+
+  .email-link {
+    display: inline-block;
+    margin-top: 16px;
+    padding: 12px 28px;
+    background: linear-gradient(135deg, var(--brand), #8B7FFF);
+    color: white;
+    font-family: var(--font);
+    font-size: 15px;
+    font-weight: 700;
+    text-decoration: none;
+    border-radius: 999px;
+    transition: opacity 0.2s, transform 0.2s;
+  }
+
+  .email-link:hover { opacity: 0.85; transform: translateY(-2px); }
+
+  /* ── FEATURES GRID ── */
+  .features {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+    margin-top: 8px;
+  }
+
+  .feature {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px;
+  }
+
+  .feature-icon { font-size: 28px; margin-bottom: 10px; display: block; }
+  .feature-title { font-size: 14px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+  .feature-desc { font-size: 13px; color: var(--text3); margin: 0; line-height: 1.5; }
+
+  /* ── DIVIDER ── */
+  hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 0 0 56px;
+  }
+
+  /* ── FOOTER ── */
+  footer {
+    padding: 32px 0 48px;
+    text-align: center;
+    color: var(--text3);
+    font-size: 13px;
+  }
+
+  footer a { color: var(--brand); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+
+  /* ── ANIMATIONS ── */
+  .fade-up {
+    opacity: 0;
+    transform: translateY(20px);
+    animation: fadeUp 0.5s ease forwards;
+  }
+  @keyframes fadeUp {
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .fade-up:nth-child(1) { animation-delay: 0.1s; }
+  .fade-up:nth-child(2) { animation-delay: 0.2s; }
+  .fade-up:nth-child(3) { animation-delay: 0.3s; }
+  .fade-up:nth-child(4) { animation-delay: 0.4s; }
+  .fade-up:nth-child(5) { animation-delay: 0.5s; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <!-- HERO -->
+  <header>
+    <div class="logo-mark">🧩</div>
+    <h1>Puzzle Verse Games</h1>
+    <p class="hero-sub">Support &amp; Help Center</p>
+  </header>
+
+  <!-- ABOUT -->
+  <section>
+    <span class="section-label">About the App</span>
+    <h2>100+ puzzles in your pocket</h2>
+    <p>Puzzle Verse Games is a free mobile puzzle app featuring over 100 brain games — Sudoku, Wordle-style word games, crosswords, nonograms, logic puzzles, and much more. All puzzles are generated on your device. No internet required, no ads, no subscriptions.</p>
+    <div class="features" style="margin-top:20px">
+      <div class="feature fade-up">
+        <span class="feature-icon">🔢</span>
+        <div class="feature-title">Number Games</div>
+        <p class="feature-desc">Sudoku, 2048, Kakuro, Nonograms and more</p>
+      </div>
+      <div class="feature fade-up">
+        <span class="feature-icon">🔤</span>
+        <div class="feature-title">Word Games</div>
+        <p class="feature-desc">Word Guess, Crosswords, Anagrams, Spelling Bee</p>
+      </div>
+      <div class="feature fade-up">
+        <span class="feature-icon">🧩</span>
+        <div class="feature-title">Logic Puzzles</div>
+        <p class="feature-desc">Connections, Minesweeper, Logic Grids</p>
+      </div>
+      <div class="feature fade-up">
+        <span class="feature-icon">🎨</span>
+        <div class="feature-title">Visual Games</div>
+        <p class="feature-desc">Color Sort, Tangram, Pipe Connect, Mazes</p>
+      </div>
+    </div>
+  </section>
+
+  <hr>
+
+  <!-- FAQ -->
+  <section>
+    <span class="section-label">FAQ</span>
+    <h2>Common questions</h2>
+    <div class="faq">
+      <div class="faq-item">
+        <div class="faq-q">Is the app really free?</div>
+        <p class="faq-a">Yes — completely free. No ads, no in-app purchases, no subscriptions. Ever.</p>
+      </div>
+      <div class="faq-item">
+        <div class="faq-q">Does it work offline?</div>
+        <p class="faq-a">Yes. All puzzles are generated on your device. You never need an internet connection to play.</p>
+      </div>
+      <div class="faq-item">
+        <div class="faq-q">Will I run out of puzzles?</div>
+        <p class="faq-a">No. Puzzles are algorithmically generated — Sudoku, Word Search, Nonograms and most other games produce unlimited unique puzzles automatically.</p>
+      </div>
+      <div class="faq-item">
+        <div class="faq-q">My progress disappeared after an update</div>
+        <p class="faq-a">Progress is stored locally on your device. Uninstalling the app will erase your progress. We recommend not uninstalling if you want to preserve your streaks. If this happened after an update, please contact us — we want to know.</p>
+      </div>
+      <div class="faq-item">
+        <div class="faq-q">A game is not working correctly</div>
+        <p class="faq-a">Please email us with the game name, what happened, and your device model and iOS version. We take bugs seriously and aim to fix them fast.</p>
+      </div>
+      <div class="faq-item">
+        <div class="faq-q">Can I suggest a new puzzle game?</div>
+        <p class="faq-a">Absolutely — we love ideas. Send your suggestion to our support email below.</p>
+      </div>
+      <div class="faq-item">
+        <div class="faq-q">How do I reset my progress?</div>
+        <p class="faq-a">Go to Settings inside the app → scroll to the bottom → tap "Reset All Progress". This cannot be undone.</p>
+      </div>
+    </div>
+  </section>
+
+  <hr>
+
+  <!-- CONTACT -->
+  <section>
+    <span class="section-label">Contact</span>
+    <h2>Get in touch</h2>
+    <div class="contact-card">
+      <span class="contact-icon">✉️</span>
+      <h3>We read every message</h3>
+      <p style="color:var(--text2)">Puzzle Verse Games is built by a solo developer. If you have a bug report, feature request, or just want to say hello — email us and you'll hear back personally.</p>
+      <a class="email-link" href="mailto:naveen.thinkbigstudio@gmail.com">support@puzzleversegames.com</a>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer>
+    <p>© 2025 Puzzle Verse Games · <a href="privacy.html">Privacy Policy</a></p>
+  </footer>
+
+</div>
+</body>
+</html>
