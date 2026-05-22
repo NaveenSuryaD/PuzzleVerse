@@ -15,7 +15,9 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.thinkBig.puzzleverse",
-      "buildNumber": "1"
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {

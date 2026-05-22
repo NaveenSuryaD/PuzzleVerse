@@ -5,12 +5,13 @@ name: Setup Branch Protection
 #   - blocks direct pushes to main
 #   - requires a PR with type-check and audit passing before merge
 #   - enforces on admins (no bypass)
+#
+# Prerequisite: add a repo secret named GH_PAT containing a classic Personal
+# Access Token with the "repo" scope (Settings → Developer settings → PATs).
+# GITHUB_TOKEN cannot manage rulesets — a PAT is required.
 
 on:
   workflow_dispatch:
-
-permissions:
-  administration: write
 
 jobs:
   protect:
@@ -19,7 +20,7 @@ jobs:
     steps:
       - name: Create Protect-main ruleset
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           curl -fsSL \
             -X POST \
