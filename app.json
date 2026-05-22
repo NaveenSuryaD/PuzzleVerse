@@ -33,6 +33,13 @@
     "plugins": [
       "expo-router",
       "expo-font"
-    ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "0907a966-db91-46a6-96a6-338ad7e32fb2"
+      }
+    },
+    "owner": "naveen_suryadevara_apps"
   }
 }

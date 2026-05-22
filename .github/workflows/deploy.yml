@@ -122,6 +122,8 @@ jobs:
             --json \
             --no-wait | jq -r '.[0].id')
           echo "build-id=$BUILD_ID" >> $GITHUB_OUTPUT
+          eas build:view $BUILD_ID --json | jq -r '.status' | grep -qE 'FINISHED|IN_QUEUE|IN_PROGRESS' \
+            || { echo "Build failed to queue"; exit 1; }
           echo "Queued build: https://expo.dev/builds/$BUILD_ID"
 
       - name: Wait for Android build
