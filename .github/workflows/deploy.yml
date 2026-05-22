@@ -1,0 +1,220 @@
+name: EAS Build & Submit
+
+# Secret inventory
+# ─────────────────────────────────────────────────────────────────────────────
+# GitHub Secrets (Settings → Secrets → Actions):
+#   EXPO_TOKEN                      — authenticates this runner with EAS
+#   GOOGLE_PLAY_SERVICE_ACCOUNT_JSON — Android store submission
+#   APPLE_APP_SPECIFIC_PASSWORD — iOS App Store submission
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Platform to build
+        type: choice
+        default: all
+        options: [all, ios, android]
+      profile:
+        description: Build profile
+        type: choice
+        default: production
+        options: [production, preview, development]
+
+# Cancel in-progress runs for the same ref — avoids queueing stale EAS builds
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+  BUILD_PROFILE: ${{ github.event.inputs.profile || 'production' }}
+
+jobs:
+  # ── iOS Build ────────────────────────────────────────────────────────────────
+  build_ios:
+    name: Build iOS
+    runs-on: ubuntu-latest
+    if: github.event.inputs.platform != 'android'
+    outputs:
+      build-id: ${{ steps.build.outputs.build-id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Build iOS
+        id: build
+        run: |
+          BUILD_ID=$(eas build \
+            --platform ios \
+            --profile ${{ env.BUILD_PROFILE }} \
+            --non-interactive \
+            --json \
+            --no-wait | jq -r '.[0].id')
+          echo "build-id=$BUILD_ID" >> $GITHUB_OUTPUT
+          eas build:view $BUILD_ID --json | jq -r '.status' | grep -qE 'FINISHED|IN_QUEUE|IN_PROGRESS' \
+            || { echo "Build failed to queue"; exit 1; }
+          echo "Queued build: https://expo.dev/builds/$BUILD_ID"
+
+      - name: Wait for iOS build
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          BUILD_ID=${{ steps.build.outputs.build-id }}
+          echo "Waiting for build $BUILD_ID..."
+          while true; do
+            STATUS=$(eas build:view $BUILD_ID --json | jq -r '.status')
+            echo "Status: $STATUS"
+            case $STATUS in
+              FINISHED) echo "Build succeeded"; break ;;
+              ERRORED|CANCELLED) echo "Build failed with status: $STATUS"; exit 1 ;;
+            esac
+            sleep 60
+          done
+
+  # ── Android Build ────────────────────────────────────────────────────────────
+  build_android:
+    name: Build Android
+    runs-on: ubuntu-latest
+    if: github.event.inputs.platform != 'ios'
+    outputs:
+      build-id: ${{ steps.build.outputs.build-id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Build Android
+        id: build
+        run: |
+          BUILD_ID=$(eas build \
+            --platform android \
+            --profile ${{ env.BUILD_PROFILE }} \
+            --non-interactive \
+            --json \
+            --no-wait | jq -r '.[0].id')
+          echo "build-id=$BUILD_ID" >> $GITHUB_OUTPUT
+          echo "Queued build: https://expo.dev/builds/$BUILD_ID"
+
+      - name: Wait for Android build
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          BUILD_ID=${{ steps.build.outputs.build-id }}
+          echo "Waiting for build $BUILD_ID..."
+          while true; do
+            STATUS=$(eas build:view $BUILD_ID --json | jq -r '.status')
+            echo "Status: $STATUS"
+            case $STATUS in
+              FINISHED) echo "Build succeeded"; break ;;
+              ERRORED|CANCELLED) echo "Build failed with status: $STATUS"; exit 1 ;;
+            esac
+            sleep 60
+          done
+
+  # ── iOS Submit (App Store) ───────────────────────────────────────────────────
+  submit_ios:
+    name: Submit iOS → App Store
+    runs-on: ubuntu-latest
+    needs: build_ios
+    if: |
+      github.ref == 'refs/heads/main' &&
+      needs.build_ios.result == 'success' &&
+      (github.event.inputs.profile == 'production' || github.event.inputs.profile == '')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Submit iOS
+        env:
+          EXPO_APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          eas submit \
+            --platform ios \
+            --profile production \
+            --id ${{ needs.build_ios.outputs.build-id }} \
+            --non-interactive
+
+  # ── Android Submit (Google Play) ─────────────────────────────────────────────
+  submit_android:
+    name: Submit Android → Google Play
+    runs-on: ubuntu-latest
+    needs: build_android
+    if: |
+      github.ref == 'refs/heads/main' &&
+      needs.build_android.result == 'success' &&
+      (github.event.inputs.profile == 'production' || github.event.inputs.profile == '')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Write Google Play service account key
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          echo "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON" > google-play-key.json
+          chmod 600 google-play-key.json
+
+      - name: Submit Android
+        run: |
+          eas submit \
+            --platform android \
+            --profile production \
+            --id ${{ needs.build_android.outputs.build-id }} \
+            --non-interactive
+
+      - name: Cleanup Play key
+        if: always()
+        run: shred -u google-play-key.json || rm -f google-play-key.json
