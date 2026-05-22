@@ -1,78 +1,38 @@
 name: Setup Branch Protection
 
 # Run this ONCE manually from Actions → Setup Branch Protection → Run workflow.
-# It creates a GitHub Ruleset that:
-#   - blocks direct pushes to main
-#   - requires a PR with expo-doctor, type-check, and audit passing before merge
+# It applies classic branch protection to main (works on free GitHub plans):
+#   - blocks direct pushes (requires a PR)
+#   - requires expo-doctor, type-check, and audit to pass before merge
 #   - enforces on admins (no bypass)
 #
-# Uses the built-in GITHUB_TOKEN with administration: write — no PAT required.
+# Uses the built-in GITHUB_TOKEN — no PAT required.
 
 on:
   workflow_dispatch:
 
 jobs:
   protect:
-    name: Apply main branch ruleset
+    name: Apply main branch protection
     runs-on: ubuntu-latest
     permissions: write-all
     steps:
-      - name: Delete existing Protect-main ruleset (idempotent)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          RULESET_ID=$(gh api \
-            repos/${{ github.repository }}/rulesets \
-            --jq '.[] | select(.name == "Protect main") | .id' 2>/dev/null || true)
-          if [ -n "$RULESET_ID" ]; then
-            echo "Deleting existing ruleset $RULESET_ID"
-            gh api -X DELETE repos/${{ github.repository }}/rulesets/$RULESET_ID
-          fi
-
-      - name: Create Protect-main ruleset
+      - name: Apply branch protection rules
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh api \
-            -X POST \
+            -X PUT \
             -H "Accept: application/vnd.github+json" \
-            repos/${{ github.repository }}/rulesets \
+            repos/${{ github.repository }}/branches/main/protection \
             --input - <<'EOF'
           {
-            "name": "Protect main",
-            "target": "branch",
-            "enforcement": "active",
-            "bypass_actors": [],
-            "conditions": {
-              "ref_name": {
-                "include": ["refs/heads/main"],
-                "exclude": []
-              }
+            "required_status_checks": {
+              "strict": false,
+              "contexts": ["expo-doctor", "type-check", "audit"]
             },
-            "rules": [
-              { "type": "deletion" },
-              { "type": "non_fast_forward" },
-              {
-                "type": "pull_request",
-                "parameters": {
-                  "required_approving_review_count": 0,
-                  "dismiss_stale_reviews_on_push": false,
-                  "require_code_owner_review": false,
-                  "require_last_push_approval": false,
-                  "required_review_thread_resolution": false
-                }
-              },
-              {
-                "type": "required_status_checks",
-                "parameters": {
-                  "strict_required_status_checks_policy": false,
-                  "required_status_checks": [
-                    { "context": "expo-doctor" },
-                    { "context": "type-check" },
-                    { "context": "audit" }
-                  ]
-                }
-              }
-            ]
+            "enforce_admins": true,
+            "required_pull_request_reviews": null,
+            "restrictions": null
           }
           EOF
