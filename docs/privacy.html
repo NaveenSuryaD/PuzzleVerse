@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Puzzle Verse Games — Privacy Policy</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0D0D1A;
+    --surface: #16162A;
+    --brand: #6C63FF;
+    --accent: #43E6FC;
+    --text: #F0F0FF;
+    --text2: #9898B8;
+    --text3: #5C5C80;
+    --border: rgba(255,255,255,0.08);
+    --font: 'Nunito', sans-serif;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 16px;
+    line-height: 1.8;
+    min-height: 100vh;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(108,99,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(108,99,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .wrap { position: relative; z-index: 1; max-width: 720px; margin: 0 auto; padding: 0 24px 64px; }
+
+  header { padding: 64px 0 48px; }
+
+  .back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--brand);
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 32px;
+    opacity: 0.8;
+    transition: opacity 0.2s;
+  }
+  .back-link:hover { opacity: 1; }
+
+  .logo-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 64px; height: 64px;
+    border-radius: 18px;
+    background: linear-gradient(135deg, var(--brand), #8B7FFF);
+    font-size: 32px;
+    margin-bottom: 20px;
+    box-shadow: 0 0 32px rgba(108,99,255,0.3);
+  }
+
+  h1 {
+    font-size: clamp(24px, 5vw, 36px);
+    font-weight: 900;
+    letter-spacing: -0.5px;
+    background: linear-gradient(135deg, #fff 30%, var(--brand));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 8px;
+  }
+
+  .meta { color: var(--text3); font-size: 14px; }
+
+  /* highlight box */
+  .highlight {
+    background: rgba(108,99,255,0.08);
+    border: 1px solid rgba(108,99,255,0.2);
+    border-radius: 16px;
+    padding: 24px 28px;
+    margin-bottom: 48px;
+  }
+
+  .highlight p {
+    color: var(--text2);
+    font-size: 15px;
+    margin: 0;
+  }
+
+  .highlight strong { color: var(--accent); }
+
+  /* sections */
+  .policy-section { margin-bottom: 44px; }
+
+  h2 {
+    font-size: 20px;
+    font-weight: 800;
+    color: var(--text);
+    margin-bottom: 14px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  p { color: var(--text2); margin-bottom: 12px; font-size: 15px; }
+  p:last-child { margin-bottom: 0; }
+
+  ul {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 12px;
+  }
+
+  ul li {
+    color: var(--text2);
+    font-size: 15px;
+    padding: 6px 0 6px 20px;
+    position: relative;
+  }
+
+  ul li::before {
+    content: '→';
+    position: absolute;
+    left: 0;
+    color: var(--brand);
+    font-weight: 700;
+  }
+
+  /* big NO section */
+  .no-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 10px;
+    margin-top: 12px;
+  }
+
+  .no-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .no-icon { font-size: 20px; flex-shrink: 0; }
+
+  /* contact */
+  .contact {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px 28px;
+    margin-top: 12px;
+  }
+
+  .contact a {
+    color: var(--brand);
+    text-decoration: none;
+    font-weight: 700;
+  }
+  .contact a:hover { text-decoration: underline; }
+
+  footer {
+    padding-top: 40px;
+    text-align: center;
+    color: var(--text3);
+    font-size: 13px;
+    border-top: 1px solid var(--border);
+  }
+
+  footer a { color: var(--brand); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <a class="back-link" href="index.html">← Support Home</a>
+    <div class="logo-mark">🧩</div>
+    <h1>Privacy Policy</h1>
+    <p class="meta">Puzzle Verse Games · Last updated: June 2025</p>
+  </header>
+
+  <!-- TL;DR -->
+  <div class="highlight">
+    <p><strong>The short version:</strong> Puzzle Verse Games collects absolutely no personal data. Everything stays on your device. We don't know who you are, and we don't want to.</p>
+  </div>
+
+  <!-- 1 -->
+  <div class="policy-section">
+    <h2>1. Who We Are</h2>
+    <p>Puzzle Verse Games is an independent mobile application developed and maintained by a solo developer. This privacy policy explains how the app handles (or rather, doesn't handle) your information.</p>
+  </div>
+
+  <!-- 2 -->
+  <div class="policy-section">
+    <h2>2. Data We Do Not Collect</h2>
+    <p>We want to be crystal clear. Puzzle Verse Games does <strong>not</strong> collect, store, transmit, or share any of the following:</p>
+    <div class="no-list">
+      <div class="no-item"><span class="no-icon">🚫</span>Your name</div>
+      <div class="no-item"><span class="no-icon">🚫</span>Email address</div>
+      <div class="no-item"><span class="no-icon">🚫</span>Phone number</div>
+      <div class="no-item"><span class="no-icon">🚫</span>Location data</div>
+      <div class="no-item"><span class="no-icon">🚫</span>Device identifiers</div>
+      <div class="no-item"><span class="no-icon">🚫</span>Usage analytics</div>
+      <div class="no-item"><span class="no-icon">🚫</span>Crash reports</div>
+      <div class="no-item"><span class="no-icon">🚫</span>Advertising IDs</div>
+      <div class="no-item"><span class="no-icon">🚫</span>IP address</div>
+      <div class="no-item"><span class="no-icon">🚫</span>Contacts</div>
+      <div class="no-item"><span class="no-icon">🚫</span>Photos or media</div>
+      <div class="no-item"><span class="no-icon">🚫</span>Health data</div>
+    </div>
+  </div>
+
+  <!-- 3 -->
+  <div class="policy-section">
+    <h2>3. Data Stored on Your Device</h2>
+    <p>The app stores the following information <strong>locally on your device only</strong>. This data never leaves your device and is never accessible to us:</p>
+    <ul>
+      <li>Your game progress, scores, and statistics</li>
+      <li>Daily streak counts</li>
+      <li>Achievements you've unlocked</li>
+      <li>Your app preferences (dark mode, sound, haptics settings)</li>
+      <li>Games you've marked as favourites</li>
+    </ul>
+    <p>This data is stored using your device's local storage. It is deleted if you uninstall the app.</p>
+  </div>
+
+  <!-- 4 -->
+  <div class="policy-section">
+    <h2>4. Network Access</h2>
+    <p>Puzzle Verse Games does not require an internet connection and makes no network requests during normal gameplay. All puzzle generation happens entirely on your device.</p>
+    <p>The only potential network activity is loading the Nunito font on first launch if not already cached by your device — this is a standard Google Fonts request and contains no personal identifiers.</p>
+  </div>
+
+  <!-- 5 -->
+  <div class="policy-section">
+    <h2>5. Third-Party Services</h2>
+    <p>Puzzle Verse Games does not integrate any third-party analytics, advertising, tracking, or data collection SDKs. There are no third parties with access to any information from your use of the app.</p>
+  </div>
+
+  <!-- 6 -->
+  <div class="policy-section">
+    <h2>6. Children's Privacy</h2>
+    <p>Puzzle Verse Games is appropriate for all ages including children under 13. Because we collect no data whatsoever, the app fully complies with COPPA (Children's Online Privacy Protection Act) and similar regulations globally.</p>
+  </div>
+
+  <!-- 7 -->
+  <div class="policy-section">
+    <h2>7. Your Rights</h2>
+    <p>Since we hold no personal data about you, there is nothing to access, correct, export, or delete on our end. To remove all locally stored data, simply uninstall the app from your device.</p>
+  </div>
+
+  <!-- 8 -->
+  <div class="policy-section">
+    <h2>8. Changes to This Policy</h2>
+    <p>If we ever update this privacy policy, we will update the date at the top of this page and note the changes clearly. We will never introduce data collection without being fully transparent about it.</p>
+  </div>
+
+  <!-- 9 -->
+  <div class="policy-section">
+    <h2>9. Contact</h2>
+    <p>Questions about this privacy policy? Get in touch:</p>
+    <div class="contact">
+      <p>📧 <a href="mailto:naveen.thinkbigstudio@gmail.com">support@puzzleversegames.com</a></p>
+      <p style="margin-top:8px">We'll respond personally. Usually within 48 hours.</p>
+    </div>
+  </div>
+
+  <footer>
+    <p>© 2025 Puzzle Verse Games · <a href="index.html">Support Home</a></p>
+  </footer>
+
+</div>
+</body>
+</html>
