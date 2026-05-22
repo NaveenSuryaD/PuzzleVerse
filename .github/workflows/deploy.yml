@@ -224,10 +224,10 @@ jobs:
 
       - name: Write Google Play service account key
         env:
-          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
         run: |
-          echo "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON" > google-play-key.json
-          chmod 600 google-play-key.json
+          echo "$GOOGLE_SERVICE_ACCOUNT_JSON" > .google-service-account.json
+          chmod 600 .google-service-account.json
 
       - name: Submit Android
         run: |
@@ -237,6 +237,6 @@ jobs:
             --id ${{ needs.build_android.outputs.build-id }} \
             --non-interactive
 
-      - name: Cleanup Play key
+      - name: Cleanup service account key
         if: always()
-        run: shred -u google-play-key.json || rm -f google-play-key.json
+        run: shred -u .google-service-account.json || rm -f .google-service-account.json
