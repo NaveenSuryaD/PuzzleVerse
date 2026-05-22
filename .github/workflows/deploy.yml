@@ -67,8 +67,11 @@ jobs:
             --json \
             --no-wait | jq -r '.[0].id')
           echo "build-id=$BUILD_ID" >> $GITHUB_OUTPUT
-          eas build:view $BUILD_ID --json | jq -r '.status' | grep -qE 'FINISHED|IN_QUEUE|IN_PROGRESS' \
-            || { echo "Build failed to queue"; exit 1; }
+          STATUS=$(eas build:view $BUILD_ID --json | jq -r '.status')
+          echo "Initial status: $STATUS"
+          if [[ "$STATUS" == "ERRORED" || "$STATUS" == "CANCELLED" ]]; then
+            echo "Build failed to queue with status: $STATUS"; exit 1
+          fi
           echo "Queued build: https://expo.dev/builds/$BUILD_ID"
 
       - name: Wait for iOS build
@@ -87,16 +90,13 @@ jobs:
             sleep 60
           done
 
-      - name: Cancel EAS build on workflow cancellation
-        if: cancelled()
+      - name: Cancel EAS build on cancellation or failure
+        if: (cancelled() || failure()) && steps.build.outputs.build-id != ''
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
-          BUILD_ID=${{ steps.build.outputs.build-id }}
-          if [ -n "$BUILD_ID" ]; then
-            echo "Workflow cancelled — cancelling EAS build $BUILD_ID"
-            eas build:cancel $BUILD_ID --non-interactive || true
-          fi
+          echo "Cancelling EAS build ${{ steps.build.outputs.build-id }}"
+          eas build:cancel ${{ steps.build.outputs.build-id }} --non-interactive || true
 
   # ── Android Build ────────────────────────────────────────────────────────────
   build_android:
@@ -131,8 +131,11 @@ jobs:
             --json \
             --no-wait | jq -r '.[0].id')
           echo "build-id=$BUILD_ID" >> $GITHUB_OUTPUT
-          eas build:view $BUILD_ID --json | jq -r '.status' | grep -qE 'FINISHED|IN_QUEUE|IN_PROGRESS' \
-            || { echo "Build failed to queue"; exit 1; }
+          STATUS=$(eas build:view $BUILD_ID --json | jq -r '.status')
+          echo "Initial status: $STATUS"
+          if [[ "$STATUS" == "ERRORED" || "$STATUS" == "CANCELLED" ]]; then
+            echo "Build failed to queue with status: $STATUS"; exit 1
+          fi
           echo "Queued build: https://expo.dev/builds/$BUILD_ID"
 
       - name: Wait for Android build
@@ -151,16 +154,13 @@ jobs:
             sleep 60
           done
 
-      - name: Cancel EAS build on workflow cancellation
-        if: cancelled()
+      - name: Cancel EAS build on cancellation or failure
+        if: (cancelled() || failure()) && steps.build.outputs.build-id != ''
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
-          BUILD_ID=${{ steps.build.outputs.build-id }}
-          if [ -n "$BUILD_ID" ]; then
-            echo "Workflow cancelled — cancelling EAS build $BUILD_ID"
-            eas build:cancel $BUILD_ID --non-interactive || true
-          fi
+          echo "Cancelling EAS build ${{ steps.build.outputs.build-id }}"
+          eas build:cancel ${{ steps.build.outputs.build-id }} --non-interactive || true
 
   # ── iOS Submit (App Store) ───────────────────────────────────────────────────
   submit_ios:
