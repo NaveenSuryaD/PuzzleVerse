@@ -3,12 +3,10 @@ name: Setup Branch Protection
 # Run this ONCE manually from Actions → Setup Branch Protection → Run workflow.
 # It creates a GitHub Ruleset that:
 #   - blocks direct pushes to main
-#   - requires a PR with type-check and audit passing before merge
+#   - requires a PR with expo-doctor, type-check, and audit passing before merge
 #   - enforces on admins (no bypass)
 #
-# Prerequisite: add a repo secret named GH_PAT containing a classic Personal
-# Access Token with the "repo" scope (Settings → Developer settings → PATs).
-# GITHUB_TOKEN cannot manage rulesets — a PAT is required.
+# Uses the built-in GITHUB_TOKEN with administration: write — no PAT required.
 
 on:
   workflow_dispatch:
@@ -17,55 +15,64 @@ jobs:
   protect:
     name: Apply main branch ruleset
     runs-on: ubuntu-latest
+    permissions: write-all
     steps:
+      - name: Delete existing Protect-main ruleset (idempotent)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RULESET_ID=$(gh api \
+            repos/${{ github.repository }}/rulesets \
+            --jq '.[] | select(.name == "Protect main") | .id' 2>/dev/null || true)
+          if [ -n "$RULESET_ID" ]; then
+            echo "Deleting existing ruleset $RULESET_ID"
+            gh api -X DELETE repos/${{ github.repository }}/rulesets/$RULESET_ID
+          fi
+
       - name: Create Protect-main ruleset
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          curl -fsSL \
+          gh api \
             -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/${{ github.repository }}/rulesets \
-            -d '{
-              "name": "Protect main",
-              "target": "branch",
-              "enforcement": "active",
-              "bypass_actors": [],
-              "conditions": {
-                "ref_name": {
-                  "include": ["refs/heads/main"],
-                  "exclude": []
+            repos/${{ github.repository }}/rulesets \
+            --input - <<'EOF'
+          {
+            "name": "Protect main",
+            "target": "branch",
+            "enforcement": "active",
+            "bypass_actors": [],
+            "conditions": {
+              "ref_name": {
+                "include": ["refs/heads/main"],
+                "exclude": []
+              }
+            },
+            "rules": [
+              { "type": "deletion" },
+              { "type": "non_fast_forward" },
+              {
+                "type": "pull_request",
+                "parameters": {
+                  "required_approving_review_count": 0,
+                  "dismiss_stale_reviews_on_push": false,
+                  "require_code_owner_review": false,
+                  "require_last_push_approval": false,
+                  "required_review_thread_resolution": false
                 }
               },
-              "rules": [
-                {
-                  "type": "deletion"
-                },
-                {
-                  "type": "non_fast_forward"
-                },
-                {
-                  "type": "pull_request",
-                  "parameters": {
-                    "required_approving_review_count": 0,
-                    "dismiss_stale_reviews_on_push": false,
-                    "require_code_owner_review": false,
-                    "require_last_push_approval": false,
-                    "required_review_thread_resolution": false
-                  }
-                },
-                {
-                  "type": "required_status_checks",
-                  "parameters": {
-                    "strict_required_status_checks_policy": false,
-                    "required_status_checks": [
-                      {"context": "expo-doctor"},
-                      {"context": "type-check"},
-                      {"context": "audit"}
-                    ]
-                  }
+              {
+                "type": "required_status_checks",
+                "parameters": {
+                  "strict_required_status_checks_policy": false,
+                  "required_status_checks": [
+                    { "context": "expo-doctor" },
+                    { "context": "type-check" },
+                    { "context": "audit" }
+                  ]
                 }
-              ]
-            }'
+              }
+            ]
+          }
+          EOF
