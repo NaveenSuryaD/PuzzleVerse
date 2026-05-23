@@ -6,7 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme, type ThemeColors } from '../../src/theme/useTheme';
 import { fonts } from '../../src/theme/typography';
 import { useProgressStore } from '../../src/store/useProgressStore';
-import { GAMES } from '../../src/constants/games';
+import { GAMES, getGamesByMVP } from '../../src/constants/games';
 
 // ISO week order: Mon=0 … Sun=6
 const ISO_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];

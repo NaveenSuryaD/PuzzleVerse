@@ -8,6 +8,14 @@ import { fonts } from '../../src/theme/typography';
 import { GAMES } from '../../src/constants/games';
 import { SudokuGame } from '../../src/games/sudoku/SudokuGame';
 import { WordGuessGame } from '../../src/games/wordguess/WordGuessGame';
+import { WordSearchGame } from '../../src/games/wordsearch/WordSearchGame';
+import { GroupItGame } from '../../src/games/groupit/GroupItGame';
+import { HangmanGame } from '../../src/games/hangman/HangmanGame';
+import { NumberBondsGame } from '../../src/games/numberbonds/NumberBondsGame';
+import { CrosswordGame } from '../../src/games/crossword/CrosswordGame';
+import { PatternRecogGame } from '../../src/games/patternrecog/PatternRecogGame';
+import { SequenceFillGame } from '../../src/games/sequencefill/SequenceFillGame';
+import { MathSprintGame } from '../../src/games/mathsprint/MathSprintGame';
 import { useProgressStore } from '../../src/store/useProgressStore';
 import { useGameStore } from '../../src/store/useGameStore';
 import type { GameMode } from '../../src/games/wordguess/types';
@@ -78,11 +86,27 @@ export default function GameScreen() {
 
   const subtitle = game.id === 'word-guess'
     ? (isDailyGame ? 'Daily Challenge' : 'Unlimited')
-    : isDailyGame
-      ? 'Daily · Medium'
-      : sudokuDifficulty
-        ? sudokuDifficulty.charAt(0).toUpperCase() + sudokuDifficulty.slice(1)
-        : 'Easy';
+    : game.id === 'word-search'
+      ? 'Find the hidden words'
+      : game.id === 'group-it'
+        ? 'Find four groups of four'
+        : game.id === 'hangman'
+          ? 'Guess the hidden word'
+          : game.id === 'number-bonds'
+            ? 'Clear the board'
+            : game.id === 'crossword-mini'
+              ? (isDailyGame ? 'Daily Puzzle' : 'Mini Crossword')
+              : game.id === 'pattern-recog'
+                ? 'What comes next?'
+                : game.id === 'sequence-fill'
+                  ? 'Complete the sequence'
+                  : game.id === 'math-sprint'
+                    ? '20 questions · timed'
+                    : isDailyGame
+              ? 'Daily · Medium'
+              : sudokuDifficulty
+                ? sudokuDifficulty.charAt(0).toUpperCase() + sudokuDifficulty.slice(1)
+                : 'Easy';
 
   const renderGame = () => {
     if (game.id === 'sudoku') {
@@ -110,6 +134,46 @@ export default function GameScreen() {
           onComplete={(won, attempts) => handleComplete(won, attempts * 60)}
         />
       );
+    }
+    if (game.id === 'word-search') {
+      return (
+        <WordSearchGame
+          onComplete={(won, t) => handleComplete(won, t)}
+        />
+      );
+    }
+    if (game.id === 'group-it') {
+      return (
+        <GroupItGame
+          onComplete={(won, t) => handleComplete(won, t)}
+        />
+      );
+    }
+    if (game.id === 'hangman') {
+      return (
+        <HangmanGame
+          onComplete={(won, t) => handleComplete(won, t)}
+        />
+      );
+    }
+    if (game.id === 'number-bonds') {
+      return (
+        <NumberBondsGame
+          onComplete={(won, t) => handleComplete(won, t)}
+        />
+      );
+    }
+    if (game.id === 'crossword-mini') {
+      return <CrosswordGame onComplete={(won, t) => handleComplete(won, t)} />;
+    }
+    if (game.id === 'pattern-recog') {
+      return <PatternRecogGame onComplete={(won, t) => handleComplete(won, t)} />;
+    }
+    if (game.id === 'sequence-fill') {
+      return <SequenceFillGame onComplete={(won, t) => handleComplete(won, t)} />;
+    }
+    if (game.id === 'math-sprint') {
+      return <MathSprintGame onComplete={(won, t) => handleComplete(won, t)} />;
     }
     return (
       <View style={s.placeholder}>
