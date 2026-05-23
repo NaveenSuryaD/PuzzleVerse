@@ -46,7 +46,7 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
   const reducedMotion = useSettingsStore(s => s.reducedMotion);
 
   const [currentDifficulty, setCurrentDifficulty] = useState<Difficulty>(resolvedInitialDifficulty);
-  const [generating, setGenerating] = useState(false);
+  const [generating, setGenerating] = useState(true);
 
   const buildEmptyState = (puzzle: ReturnType<typeof generateSudoku>): SudokuState => ({
     puzzle,
@@ -60,10 +60,7 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
     isComplete: false,
   });
 
-  const [state, setState] = useState<SudokuState>(() => {
-    const puzzle = generateSudoku(resolvedInitialDifficulty);
-    return buildEmptyState(puzzle);
-  });
+  const [state, setState] = useState<SudokuState | null>(null);
 
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -72,7 +69,19 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
   const shakeX = useSharedValue(0);
   const gridScale = useSharedValue(1);
 
+  // Generate the first puzzle off the initial render to avoid blocking the JS thread
   useEffect(() => {
+    genTimeoutRef.current = setTimeout(() => {
+      const puzzle = generateSudoku(resolvedInitialDifficulty);
+      setState(buildEmptyState(puzzle));
+      setGenerating(false);
+    }, 60);
+    return () => { if (genTimeoutRef.current) clearTimeout(genTimeoutRef.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (generating || !state) return;
     timerRef.current = setInterval(() => setElapsedSeconds(s => s + 1), 1000);
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
@@ -115,12 +124,12 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
 
   const handleCellPress = useCallback((row: number, col: number) => {
     if (hapticsEnabled) Haptics.selectionAsync();
-    setState(prev => ({ ...prev, selectedCell: [row, col] }));
+    setState(prev => prev ? { ...prev, selectedCell: [row, col] } : prev);
   }, [hapticsEnabled]);
 
   const handleNumberPress = useCallback((num: number) => {
     setState(prev => {
-      if (!prev.selectedCell) return prev;
+      if (!prev || !prev.selectedCell) return prev;
       const [r, c] = prev.selectedCell;
       if (prev.puzzle.givens[r][c]) return prev;
 
@@ -161,7 +170,7 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
   const handleErase = useCallback(() => {
     if (hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setState(prev => {
-      if (!prev.selectedCell) return prev;
+      if (!prev || !prev.selectedCell) return prev;
       const [r, c] = prev.selectedCell;
       if (prev.puzzle.givens[r][c]) return prev;
       const newBoard = prev.board.map(row => [...row]);
@@ -176,7 +185,7 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
 
   const togglePencil = useCallback(() => {
     if (hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setState(prev => ({ ...prev, pencilMode: !prev.pencilMode }));
+    setState(prev => prev ? { ...prev, pencilMode: !prev.pencilMode } : prev);
   }, [hapticsEnabled]);
 
   const startNewGame = useCallback((d: Difficulty) => {
@@ -198,6 +207,7 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
   }));
 
   const numberCounts = useMemo(() => {
+    if (!state) return new Array(10).fill(0);
     const counts = new Array(10).fill(0);
     for (let r = 0; r < 9; r++)
       for (let c = 0; c < 9; c++) {
@@ -205,24 +215,25 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
         if (v > 0) counts[v]++;
       }
     return counts;
-  }, [state.board]);
+  }, [state]);
 
-  const selectedValue = state.selectedCell
+  const selectedValue = state?.selectedCell
     ? state.board[state.selectedCell[0]][state.selectedCell[1]]
     : 0;
 
   const renderCell = (row: number, col: number) => {
-    const value = state.board[row][col];
-    const isSelected = state.selectedCell?.[0] === row && state.selectedCell?.[1] === col;
-    const isGiven = state.puzzle.givens[row][col];
-    const isError = state.errors[row][col];
-    const cellNotes = state.notes[row][col];
+    const s = state!;
+    const value = s.board[row][col];
+    const isSelected = s.selectedCell?.[0] === row && s.selectedCell?.[1] === col;
+    const isGiven = s.puzzle.givens[row][col];
+    const isError = s.errors[row][col];
+    const cellNotes = s.notes[row][col];
 
-    const inSameGroup = state.selectedCell != null && (
-      state.selectedCell[0] === row ||
-      state.selectedCell[1] === col ||
-      (Math.floor(state.selectedCell[0] / 3) === Math.floor(row / 3) &&
-       Math.floor(state.selectedCell[1] / 3) === Math.floor(col / 3))
+    const inSameGroup = s.selectedCell != null && (
+      s.selectedCell[0] === row ||
+      s.selectedCell[1] === col ||
+      (Math.floor(s.selectedCell[0] / 3) === Math.floor(row / 3) &&
+       Math.floor(s.selectedCell[1] / 3) === Math.floor(col / 3))
     );
     const isSameNumber = value !== 0 && selectedValue !== 0 && value === selectedValue && !isSelected;
     const hasBorderRight = (col + 1) % 3 === 0 && col !== 8;
@@ -281,7 +292,7 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
           </View>
         ) : <View />}
         <View style={styles.headerRight}>
-          {state.pencilMode && (
+          {state?.pencilMode && (
             <View style={[styles.badge, { backgroundColor: colors.word.bg }]}>
               <Ionicons name="pencil" size={11} color={colors.word.ink} />
               <Text style={[styles.badgeText, { color: colors.word.ink }]}>Notes</Text>
@@ -314,7 +325,7 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
       )}
 
       {/* Complete banner */}
-      {state.isComplete && (
+      {state?.isComplete && (
         <View style={styles.completeBanner}>
           <Ionicons name="checkmark-circle" size={20} color={colors.success} />
           <Text style={styles.completeBannerText}>Solved!</Text>
@@ -341,7 +352,7 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
                 ]}
                 onPress={() => !isDone && handleNumberPress(num)}
                 activeOpacity={isDone ? 1 : 0.7}
-                disabled={isDone || state.isComplete}
+                disabled={isDone || !!state?.isComplete}
               >
                 <Text style={[
                   styles.numberText,
@@ -367,7 +378,7 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
 
         {/* Action row */}
         <View style={styles.actionRow}>
-          <ActionBtn icon="pencil-outline" label="Notes" active={state.pencilMode} colors={colors} styles={styles} onPress={togglePencil} />
+          <ActionBtn icon="pencil-outline" label="Notes" active={state?.pencilMode ?? false} colors={colors} styles={styles} onPress={togglePencil} />
           <ActionBtn icon="backspace-outline" label="Erase" active={false} colors={colors} styles={styles} onPress={handleErase} />
           <ActionBtn icon="refresh-outline" label="New" active={false} colors={colors} styles={styles} onPress={() => startNewGame(currentDifficulty)} />
         </View>

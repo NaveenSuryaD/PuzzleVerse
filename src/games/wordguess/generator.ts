@@ -1,43 +1,64 @@
-import { WORD_BANK, WORD_SET } from './wordBank';
+import { WORD_BANK } from './wordBank';
 import { LetterState } from './types';
 import { getDailySeed, seededRandom } from '../../utils/dailySeed';
 
 // First 2,315 words are the curated target words (used for daily + unlimited picks)
 // The remaining words extend the valid vocabulary for guess validation
 const TARGET_COUNT = 2315;
-export const TARGET_WORDS = WORD_BANK.slice(0, TARGET_COUNT);
+
+// Lazy-initialised slices — avoid allocating three sub-arrays at module load time
+let _targetWords: string[] | undefined;
+let _easyWords: string[] | undefined;
+let _hardWords: string[] | undefined;
+const getTargetWords = (): string[] => (_targetWords ??= WORD_BANK.slice(0, TARGET_COUNT));
+const getEasyWords = (): string[] => (_easyWords ??= WORD_BANK.slice(0, 500));
+const getHardWords = (): string[] => (_hardWords ??= WORD_BANK.slice(1500, TARGET_COUNT));
+
+// Binary search replaces `new Set(WORD_BANK)` — no 18 K-entry Set allocated at startup.
+// WORD_BANK is sorted alphabetically so binary search is correct here.
+function binarySearch(arr: string[], target: string): boolean {
+  let lo = 0, hi = arr.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >>> 1;
+    if (arr[mid] === target) return true;
+    if (arr[mid] < target) lo = mid + 1;
+    else hi = mid - 1;
+  }
+  return false;
+}
 
 export const pickDailyWord = (dateStr?: string): string => {
   const seed = getDailySeed('word-guess', dateStr);
-  return TARGET_WORDS[seed % TARGET_WORDS.length];
+  const words = getTargetWords();
+  return words[seed % words.length];
 };
 
 export const pickRandomWord = (seed?: number): string => {
+  const words = getTargetWords();
   if (seed !== undefined) {
     const rand = seededRandom(seed);
-    return TARGET_WORDS[Math.floor(rand() * TARGET_WORDS.length)];
+    return words[Math.floor(rand() * words.length)];
   }
-  return TARGET_WORDS[Math.floor(Math.random() * TARGET_WORDS.length)];
+  return words[Math.floor(Math.random() * words.length)];
 };
 
 export type WordDifficulty = 'easy' | 'medium' | 'hard';
 
-// Easy: first 500 (most common), Medium: full target pool, Hard: less-common words
-const EASY_WORDS  = WORD_BANK.slice(0, 500);
-const HARD_WORDS  = WORD_BANK.slice(1500, TARGET_COUNT);
-
 export const pickWordByDifficulty = (difficulty: WordDifficulty): string => {
   if (difficulty === 'easy') {
-    return EASY_WORDS[Math.floor(Math.random() * EASY_WORDS.length)];
+    const words = getEasyWords();
+    return words[Math.floor(Math.random() * words.length)];
   }
   if (difficulty === 'hard') {
-    return HARD_WORDS[Math.floor(Math.random() * HARD_WORDS.length)];
+    const words = getHardWords();
+    return words[Math.floor(Math.random() * words.length)];
   }
-  return TARGET_WORDS[Math.floor(Math.random() * TARGET_WORDS.length)];
+  const words = getTargetWords();
+  return words[Math.floor(Math.random() * words.length)];
 };
 
-// Accepts both target and obscure words as valid guesses
-export const isValidWord = (word: string): boolean => WORD_SET.has(word.toLowerCase());
+export const isValidWord = (word: string): boolean =>
+  binarySearch(WORD_BANK, word.toLowerCase());
 
 export const evaluateGuess = (guess: string, answer: string): LetterState[] => {
   const result: LetterState[] = Array(5).fill('absent');
