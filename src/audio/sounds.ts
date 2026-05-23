@@ -1,4 +1,5 @@
-import { Audio } from 'expo-av';
+import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
+import type { AudioPlayer } from 'expo-audio';
 import { useSettingsStore } from '../store/useSettingsStore';
 
 const soundFiles = {
@@ -12,30 +13,28 @@ const soundFiles = {
 
 type SoundName = keyof typeof soundFiles;
 
-const cache: Partial<Record<SoundName, Audio.Sound>> = {};
+const cache: Partial<Record<SoundName, AudioPlayer>> = {};
 
-async function getSound(name: SoundName): Promise<Audio.Sound> {
+function getPlayer(name: SoundName): AudioPlayer {
   if (cache[name]) return cache[name]!;
-  const { sound } = await Audio.Sound.createAsync(soundFiles[name]);
-  cache[name] = sound;
-  return sound;
+  const player = createAudioPlayer(soundFiles[name]);
+  cache[name] = player;
+  return player;
 }
 
 export async function playSound(name: SoundName): Promise<void> {
   const enabled = useSettingsStore.getState().soundEnabled;
   if (!enabled) return;
   try {
-    const sound = await getSound(name);
-    await sound.setPositionAsync(0);
-    await sound.playAsync();
+    const player = getPlayer(name);
+    await player.seekTo(0);
+    player.play();
   } catch {
     // ignore audio errors silently
   }
 }
 
 export async function preloadSounds(): Promise<void> {
-  await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
-  await Promise.all(
-    (Object.keys(soundFiles) as SoundName[]).map(name => getSound(name))
-  );
+  await setAudioModeAsync({ playsInSilentMode: true });
+  (Object.keys(soundFiles) as SoundName[]).forEach(name => getPlayer(name));
 }

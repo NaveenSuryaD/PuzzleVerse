@@ -4,7 +4,7 @@
     "slug": "puzzle-verse-games",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/app-icon.png",
     "scheme": "puzzle-verse-games",
     "userInterfaceStyle": "automatic",
     "ios": {
@@ -37,7 +37,9 @@
           "resizeMode": "contain",
           "backgroundColor": "#FBF6EE"
         }
-      ]
+      ],
+      "expo-audio",
+      "expo-asset"
     ],
     "extra": {
       "router": {},
