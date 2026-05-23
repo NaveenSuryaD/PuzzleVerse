@@ -2,9 +2,8 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { dark as colors } from '../theme/colors';
-import { spacing } from '../theme/spacing';
-import { text as typography } from '../theme/typography';
+import { useTheme } from '../theme/useTheme';
+import { fonts } from '../theme/typography';
 
 interface HeaderProps {
   title: string;
@@ -14,17 +13,19 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({ title, showBack = false, rightElement }) => {
   const router = useRouter();
+  const colors = useTheme();
+
   return (
-    <View style={styles.header}>
+    <View style={[styles.header, { backgroundColor: colors.bg, borderBottomColor: colors.rule }]}>
       {showBack ? (
-        <TouchableOpacity onPress={() => router.back()} style={styles.iconButton}>
-          <Ionicons name="chevron-back" size={24} color={colors.text.primary} />
+        <TouchableOpacity onPress={() => router.back()} style={[styles.iconBtn, { backgroundColor: colors.surface }]}>
+          <Ionicons name="chevron-back" size={22} color={colors.ink} />
         </TouchableOpacity>
       ) : (
-        <View style={styles.iconButton} />
+        <View style={styles.iconBtn} />
       )}
-      <Text style={styles.title} numberOfLines={1}>{title}</Text>
-      <View style={styles.iconButton}>{rightElement}</View>
+      <Text style={[styles.title, { color: colors.ink }]} numberOfLines={1}>{title}</Text>
+      <View style={styles.iconBtn}>{rightElement}</View>
     </View>
   );
 };
@@ -34,21 +35,21 @@ const styles = StyleSheet.create({
     height: 56,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: spacing.lg,
-    backgroundColor: colors.bg.primary,
+    paddingHorizontal: 20,
     borderBottomWidth: 1,
-    borderBottomColor: colors.border.subtle,
   },
-  iconButton: {
+  iconBtn: {
     width: 40,
     height: 40,
+    borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
   },
   title: {
     flex: 1,
-    ...typography.h2,
-    color: colors.text.primary,
+    fontSize: 18,
+    fontFamily: fonts.bold,
     textAlign: 'center',
+    letterSpacing: 0,
   },
 });

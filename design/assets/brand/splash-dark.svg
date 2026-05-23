@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1242 2688">
+  <rect width="1242" height="2688" fill="#16110A"></rect>
+  <circle cx="-50" cy="200" r="320" fill="#FFD2B5" opacity=".22"></circle>
+  <circle cx="1320" cy="600" r="280" fill="#D2C2FF" opacity=".22"></circle>
+  <circle cx="200" cy="2400" r="260" fill="#C3E0BD" opacity=".22"></circle>
+  <rect x="950" y="2200" width="220" height="220" rx="48" fill="#FFE49C" opacity=".28" transform="rotate(18 1060 2310)"></rect>
+
+  <g transform="translate(621 1280)">
+    <g transform="translate(-180 -380)">
+      
+      <rect width="360" height="360" rx="82" fill="#FBF6EE"></rect>
+      <g transform="translate(180 180) rotate(-5) translate(-120 -120)">
+        <rect width="240" height="240" rx="48" fill="#16110A"></rect>
+        <g transform="translate(36 36)">
+          <rect x="0" y="0" width="80" height="80" rx="16" fill="#FFD2B5"></rect>
+          <rect x="88" y="0" width="80" height="80" rx="16" fill="#FFE49C"></rect>
+          <rect x="0" y="88" width="80" height="80" rx="16" fill="#C3E0BD"></rect>
+          <rect x="88" y="88" width="80" height="80" rx="16" fill="#D2C2FF"></rect>
+        </g>
+      </g>
+    </g>
+    <text x="0" y="80" text-anchor="middle" font-family="Nunito, system-ui, sans-serif" font-weight="900" font-size="120" letter-spacing="-3" fill="#FBF6EE">PuzzleVerse</text>
+    <text x="0" y="150" text-anchor="middle" font-family="Nunito, system-ui, sans-serif" font-weight="600" font-size="44" fill="#CFC6B3">Every puzzle. Unlimited.</text>
+    <g transform="translate(-30 280)" fill="#FBF6EE">
+      <circle cx="0" cy="0" r="12" opacity=".3"></circle>
+      <circle cx="30" cy="0" r="12"></circle>
+      <circle cx="60" cy="0" r="12" opacity=".3"></circle>
+    </g>
+  </g>
+</svg>

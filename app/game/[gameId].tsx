@@ -1,20 +1,35 @@
-import React, { useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity } from 'react-native';
+import React, { useEffect, useCallback, useRef, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { dark as colors } from '../../src/theme/colors';
-import { spacing } from '../../src/theme/spacing';
-import { text as typography } from '../../src/theme/typography';
+import { useTheme } from '../../src/theme/useTheme';
+import { fonts } from '../../src/theme/typography';
 import { GAMES } from '../../src/constants/games';
 import { SudokuGame } from '../../src/games/sudoku/SudokuGame';
+import { WordGuessGame } from '../../src/games/wordguess/WordGuessGame';
 import { useProgressStore } from '../../src/store/useProgressStore';
 import { useGameStore } from '../../src/store/useGameStore';
+import type { GameMode } from '../../src/games/wordguess/types';
+
+const todayStr = () => new Date().toISOString().slice(0, 10);
+
+const formatTime = (secs: number): string => {
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+};
 
 export default function GameScreen() {
-  const { gameId } = useLocalSearchParams<{ gameId: string }>();
+  const { gameId, mode, date, difficulty, daily: dailyParam } = useLocalSearchParams<{ gameId: string; mode?: string; date?: string; difficulty?: string; daily?: string }>();
   const router = useRouter();
-  const { recordGame } = useProgressStore();
+  const colors = useTheme();
+  const { recordGame, recordDailyComplete } = useProgressStore();
   const { startGame, endGame } = useGameStore();
+
+  const [elapsed, setElapsed] = useState(0);
+  const [running, setRunning] = useState(true);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const game = GAMES.find(g => g.id === gameId);
 
@@ -22,80 +37,199 @@ export default function GameScreen() {
     if (gameId) startGame(gameId);
   }, [gameId]);
 
-  const handleComplete = useCallback((timeSeconds: number) => {
-    if (gameId) {
-      recordGame(gameId, true, timeSeconds);
-      endGame(true);
+  useEffect(() => {
+    if (running) {
+      intervalRef.current = setInterval(() => setElapsed(e => e + 1), 1000);
+    } else {
+      if (intervalRef.current) clearInterval(intervalRef.current);
     }
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+  }, [running]);
+
+  const handleComplete = useCallback((won: boolean, timeSeconds: number) => {
+    if (!gameId) return;
+    setRunning(false);
+    recordGame(gameId, won, timeSeconds);
+    endGame(won);
   }, [gameId, recordGame, endGame]);
+
+  const handleDailyComplete = useCallback((won: boolean, timeSeconds: number, dailyDate: string) => {
+    if (!gameId) return;
+    setRunning(false);
+    recordGame(gameId, won, timeSeconds);
+    endGame(won);
+    recordDailyComplete(gameId, dailyDate, won);
+  }, [gameId, recordGame, endGame, recordDailyComplete]);
+
+  const s = makeStyles(colors);
 
   if (!game) {
     return (
-      <SafeAreaView style={styles.container}>
-        <Text style={styles.error}>Game not found: {gameId}</Text>
+      <SafeAreaView style={s.container}>
+        <Text style={s.error}>Game not found: {gameId}</Text>
       </SafeAreaView>
     );
   }
 
+  const gameMode: GameMode = (mode === 'daily' || mode === 'unlimited') ? mode : 'unlimited';
+  const dailyDate = date ?? todayStr();
+  const isDailyGame = dailyParam === 'true' || gameMode === 'daily';
+  const sudokuDifficulty = (difficulty === 'easy' || difficulty === 'medium' || difficulty === 'hard') ? difficulty : undefined;
+
+  const subtitle = game.id === 'word-guess'
+    ? (isDailyGame ? 'Daily Challenge' : 'Unlimited')
+    : isDailyGame
+      ? 'Daily · Medium'
+      : sudokuDifficulty
+        ? sudokuDifficulty.charAt(0).toUpperCase() + sudokuDifficulty.slice(1)
+        : 'Easy';
+
   const renderGame = () => {
     if (game.id === 'sudoku') {
-      return <SudokuGame onComplete={handleComplete} />;
+      return (
+        <SudokuGame
+          difficulty={sudokuDifficulty}
+          daily={isDailyGame}
+          onComplete={(_, t) => isDailyGame ? handleDailyComplete(true, t, dailyDate) : handleComplete(true, t)}
+        />
+      );
+    }
+    if (game.id === 'word-guess') {
+      if (isDailyGame) {
+        return (
+          <WordGuessGame
+            mode="daily"
+            dateOverride={date}
+            onComplete={(won, attempts) => handleDailyComplete(won, attempts * 60, dailyDate)}
+          />
+        );
+      }
+      return (
+        <WordGuessGame
+          mode={gameMode}
+          onComplete={(won, attempts) => handleComplete(won, attempts * 60)}
+        />
+      );
     }
     return (
-      <View style={styles.placeholder}>
-        <Text style={styles.placeholderEmoji}>{game.emoji}</Text>
-        <Text style={styles.placeholderText}>{game.name} coming soon</Text>
+      <View style={s.placeholder}>
+        <Text style={s.placeholderEmoji}>{game.emoji}</Text>
+        <Text style={s.placeholderText}>{game.name} coming soon</Text>
       </View>
     );
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Ionicons name="chevron-back" size={24} color={colors.text.primary} />
+    <SafeAreaView style={s.container} edges={['top']}>
+      <View style={s.header}>
+        <TouchableOpacity onPress={() => router.back()} style={s.iconBtn} activeOpacity={0.7}>
+          <Ionicons name="chevron-back" size={22} color={colors.ink} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>{game.name}</Text>
-        <View style={styles.backButton} />
+
+        <View style={s.headerCenter}>
+          <Text style={s.headerTitle}>{game.name}</Text>
+          <Text style={s.headerSub}>{subtitle}</Text>
+        </View>
+
+        <View style={s.timerPill}>
+          <Ionicons name="time-outline" size={13} color={colors.inkSoft} />
+          <Text style={s.timerText}>{formatTime(elapsed)}</Text>
+        </View>
+
+        <TouchableOpacity style={s.iconBtn} activeOpacity={0.7}>
+          <Ionicons name="ellipsis-horizontal" size={20} color={colors.inkSoft} />
+        </TouchableOpacity>
       </View>
-      {/* Game */}
-      <View style={styles.gameArea}>
+
+      <View style={s.gameArea}>
         {renderGame()}
       </View>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg.primary },
+const makeStyles = (colors: ReturnType<typeof useTheme>) => StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
   header: {
-    height: 56,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: spacing.lg,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border.subtle,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    gap: 8,
   },
-  backButton: {
+  iconBtn: {
     width: 40,
     height: 40,
+    borderRadius: 999,
+    backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: colors.ink,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  headerCenter: {
+    flex: 1,
+    alignItems: 'center',
   },
   headerTitle: {
-    flex: 1,
-    ...typography.h2,
-    color: colors.text.primary,
-    textAlign: 'center',
+    fontSize: 16,
+    fontFamily: fonts.black,
+    color: colors.ink,
+    letterSpacing: -0.2,
   },
-  gameArea: { flex: 1 },
+  headerSub: {
+    fontSize: 11,
+    fontFamily: fonts.bold,
+    color: colors.inkMuted,
+    marginTop: 1,
+  },
+  timerPill: {
+    height: 40,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: colors.surface,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    shadowColor: colors.ink,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  timerText: {
+    fontSize: 13,
+    fontFamily: fonts.extraBold,
+    color: colors.ink,
+    fontVariant: ['tabular-nums'],
+  },
+  gameArea: {
+    flex: 1,
+  },
   placeholder: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  placeholderEmoji: { fontSize: 64, marginBottom: spacing.lg },
-  placeholderText: { ...typography.h1, color: colors.text.secondary },
-  error: { ...typography.body, color: colors.error, padding: spacing.lg },
+  placeholderEmoji: {
+    fontSize: 64,
+    marginBottom: 24,
+  },
+  placeholderText: {
+    fontSize: 18,
+    fontFamily: fonts.bold,
+    color: colors.inkSoft,
+  },
+  error: {
+    fontSize: 15,
+    fontFamily: fonts.regular,
+    color: colors.danger,
+    padding: 20,
+  },
 });

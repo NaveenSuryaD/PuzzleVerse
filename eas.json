@@ -30,7 +30,7 @@
         "appleTeamId": "BMDY7X9AD5"
       },
       "android": {
-        "serviceAccountKeyPath": "./google-service-account.json",
+        "serviceAccountKeyPath": "./.google-service-account.json",
         "track": "internal"
       }
     }

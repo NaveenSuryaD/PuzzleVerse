@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "Puzzle Verse Games",
+    "name": "PuzzleVerse",
     "slug": "puzzle-verse-games",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/app-icon.png",
     "scheme": "puzzle-verse-games",
     "userInterfaceStyle": "automatic",
     "ios": {
@@ -18,7 +18,7 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
-        "backgroundColor": "#6C63FF",
+        "backgroundColor": "#FBF6EE",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "package": "com.thinkBig.puzzleverse",
@@ -35,9 +35,11 @@
         {
           "image": "./assets/splash-icon.png",
           "resizeMode": "contain",
-          "backgroundColor": "#0D0D1A"
+          "backgroundColor": "#FBF6EE"
         }
-      ]
+      ],
+      "expo-audio",
+      "expo-asset"
     ],
     "extra": {
       "router": {},

@@ -11,6 +11,7 @@ interface GameProgress {
   maxStreak: number;
   lastPlayedDate: string;
   totalHintsUsed: number;
+  completedDailyDates: string[];  // ISO dates when daily mode was won
 }
 
 interface ProgressState {
@@ -20,11 +21,19 @@ interface ProgressState {
   achievements: string[];
   favoritedGames: string[];
   recordGame: (gameId: string, won: boolean, timeSeconds: number) => void;
+  recordDailyComplete: (gameId: string, date: string, won: boolean) => void;
   toggleFavorite: (gameId: string) => void;
   unlockAchievement: (achievementId: string) => void;
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
+
+function isYesterday(dateStr: string): boolean {
+  if (!dateStr) return false;
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  return yesterday.toISOString().slice(0, 10) === dateStr;
+}
 
 export const useProgressStore = create<ProgressState>()(
   persist(
@@ -34,9 +43,10 @@ export const useProgressStore = create<ProgressState>()(
       lastOverallPlayDate: '',
       achievements: [],
       favoritedGames: [],
+
       recordGame: (gameId, won, timeSeconds) => {
         const state = get();
-        const existing = state.games[gameId] ?? {
+        const existing: GameProgress = state.games[gameId] ?? {
           gameId,
           gamesPlayed: 0,
           gamesWon: 0,
@@ -45,13 +55,17 @@ export const useProgressStore = create<ProgressState>()(
           maxStreak: 0,
           lastPlayedDate: '',
           totalHintsUsed: 0,
+          completedDailyDates: [],
         };
         const todayStr = today();
-        const streakContinues = existing.lastPlayedDate === todayStr ||
-          isYesterday(existing.lastPlayedDate);
-        const newStreak = won ? (streakContinues ? existing.currentStreak + 1 : 1) : 0;
+
+        // Per-game streak
+        const gameStreakContinues = existing.lastPlayedDate === todayStr || isYesterday(existing.lastPlayedDate);
+        const newStreak = won ? (gameStreakContinues ? existing.currentStreak + 1 : 1) : 0;
+
         const updated: GameProgress = {
           ...existing,
+          completedDailyDates: existing.completedDailyDates ?? [],
           gamesPlayed: existing.gamesPlayed + 1,
           gamesWon: existing.gamesWon + (won ? 1 : 0),
           bestTimeSeconds: won
@@ -63,8 +77,47 @@ export const useProgressStore = create<ProgressState>()(
           maxStreak: Math.max(existing.maxStreak, newStreak),
           lastPlayedDate: todayStr,
         };
-        set({ games: { ...state.games, [gameId]: updated } });
+
+        // Overall streak: count days in a row ANY game was played
+        const alreadyPlayedToday = state.lastOverallPlayDate === todayStr;
+        const overallContinues = alreadyPlayedToday || isYesterday(state.lastOverallPlayDate);
+        const newOverallStreak = alreadyPlayedToday
+          ? state.overallStreak
+          : overallContinues
+            ? state.overallStreak + 1
+            : 1;
+
+        set({
+          games: { ...state.games, [gameId]: updated },
+          overallStreak: newOverallStreak,
+          lastOverallPlayDate: todayStr,
+        });
       },
+
+      recordDailyComplete: (gameId, date, won) => {
+        if (!won) return;  // only track wins
+        const state = get();
+        const existing: GameProgress = state.games[gameId] ?? {
+          gameId,
+          gamesPlayed: 0,
+          gamesWon: 0,
+          bestTimeSeconds: null,
+          currentStreak: 0,
+          maxStreak: 0,
+          lastPlayedDate: '',
+          totalHintsUsed: 0,
+          completedDailyDates: [],
+        };
+        const completedDailyDates = existing.completedDailyDates ?? [];
+        if (completedDailyDates.includes(date)) return;  // already recorded
+        set({
+          games: {
+            ...state.games,
+            [gameId]: { ...existing, completedDailyDates: [...completedDailyDates, date] },
+          },
+        });
+      },
+
       toggleFavorite: (gameId) => {
         const { favoritedGames } = get();
         const next = favoritedGames.includes(gameId)
@@ -72,6 +125,7 @@ export const useProgressStore = create<ProgressState>()(
           : [...favoritedGames, gameId];
         set({ favoritedGames: next });
       },
+
       unlockAchievement: (achievementId) => {
         const { achievements } = get();
         if (!achievements.includes(achievementId)) {
@@ -85,10 +139,3 @@ export const useProgressStore = create<ProgressState>()(
     }
   )
 );
-
-function isYesterday(dateStr: string): boolean {
-  if (!dateStr) return false;
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  return yesterday.toISOString().slice(0, 10) === dateStr;
-}

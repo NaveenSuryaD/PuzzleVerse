@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import {
   useFonts,
   Nunito_400Regular,
@@ -9,6 +10,7 @@ import {
   Nunito_900Black,
 } from '@expo-google-fonts/nunito';
 import * as SplashScreen from 'expo-splash-screen';
+import { preloadSounds } from './src/audio/sounds';
 
 // Keep splash visible until fonts are ready
 SplashScreen.preventAutoHideAsync();
@@ -37,6 +39,7 @@ export default function AppProviders({ children }: AppProvidersProps) {
   useEffect(() => {
     if (fontsLoaded || fontError) {
       SplashScreen.hideAsync();
+      preloadSounds().catch(() => {});
     }
   }, [fontsLoaded, fontError]);
 
@@ -45,7 +48,9 @@ export default function AppProviders({ children }: AppProvidersProps) {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      {children}
+      <SafeAreaProvider>
+        {children}
+      </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }

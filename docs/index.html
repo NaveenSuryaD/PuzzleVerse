@@ -3,23 +3,30 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Puzzle Verse Games — Support</title>
+<title>PuzzleVerse — Support</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
-    --bg: #0D0D1A;
-    --surface: #16162A;
-    --surface2: #1E1E35;
-    --brand: #6C63FF;
-    --accent: #FF6584;
-    --cyan: #43E6FC;
-    --text: #F0F0FF;
-    --text2: #9898B8;
-    --text3: #5C5C80;
-    --border: rgba(255,255,255,0.08);
+    --bg: #FBF6EE;
+    --surface: #FFFFFF;
+    --ink: #1E1A14;
+    --inkSoft: #5A5247;
+    --inkMuted: #9A9183;
+    --divider: #EDE5D6;
+    --rule: #F3ECDD;
+    --word-bg: #FFE0CC;
+    --word-ink: #7A3A12;
+    --number-bg: #D8ECD4;
+    --number-ink: #27502F;
+    --logic-bg: #FFEDB8;
+    --logic-ink: #6B4B08;
+    --visual-bg: #E3D8FF;
+    --visual-ink: #382673;
+    --brand: #6B4B08;
+    --brandBg: #FFEDB8;
     --font: 'Nunito', sans-serif;
   }
 
@@ -27,21 +34,20 @@
 
   body {
     background: var(--bg);
-    color: var(--text);
+    color: var(--ink);
     font-family: var(--font);
     font-size: 16px;
     line-height: 1.7;
     min-height: 100vh;
   }
 
-  /* background grid pattern */
   body::before {
     content: '';
     position: fixed;
     inset: 0;
     background-image:
-      linear-gradient(rgba(108,99,255,0.03) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(108,99,255,0.03) 1px, transparent 1px);
+      linear-gradient(var(--rule) 1px, transparent 1px),
+      linear-gradient(90deg, var(--rule) 1px, transparent 1px);
     background-size: 40px 40px;
     pointer-events: none;
     z-index: 0;
@@ -61,11 +67,25 @@
     justify-content: center;
     width: 80px; height: 80px;
     border-radius: 24px;
-    background: linear-gradient(135deg, var(--brand), var(--accent));
-    font-size: 40px;
+    background: var(--surface);
+    border: 2px solid var(--divider);
     margin-bottom: 24px;
-    box-shadow: 0 0 40px rgba(108,99,255,0.35);
+    box-shadow: 0 8px 32px rgba(30,26,20,0.10);
+    overflow: hidden;
     animation: float 3s ease-in-out infinite;
+  }
+
+  .logo-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    padding: 12px;
+    width: 100%;
+    height: 100%;
+  }
+
+  .logo-grid div {
+    border-radius: 6px;
   }
 
   @keyframes float {
@@ -77,15 +97,12 @@
     font-size: clamp(28px, 6vw, 42px);
     font-weight: 900;
     letter-spacing: -1px;
-    background: linear-gradient(135deg, #fff 30%, var(--brand));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    color: var(--ink);
     margin-bottom: 12px;
   }
 
   .hero-sub {
-    color: var(--text2);
+    color: var(--inkMuted);
     font-size: 18px;
     font-weight: 600;
   }
@@ -100,8 +117,8 @@
     letter-spacing: 2px;
     text-transform: uppercase;
     color: var(--brand);
-    background: rgba(108,99,255,0.12);
-    border: 1px solid rgba(108,99,255,0.25);
+    background: var(--brandBg);
+    border: 1px solid rgba(107,75,8,0.18);
     padding: 4px 12px;
     border-radius: 999px;
     margin-bottom: 20px;
@@ -112,10 +129,10 @@
     font-weight: 800;
     letter-spacing: -0.5px;
     margin-bottom: 16px;
-    color: var(--text);
+    color: var(--ink);
   }
 
-  p { color: var(--text2); margin-bottom: 12px; }
+  p { color: var(--inkSoft); margin-bottom: 12px; }
   p:last-child { margin-bottom: 0; }
 
   /* ── FAQ ── */
@@ -123,30 +140,34 @@
 
   .faq-item {
     background: var(--surface);
-    border: 1px solid var(--border);
+    border: 1px solid var(--divider);
     border-radius: 16px;
     padding: 20px 24px;
-    transition: border-color 0.2s;
+    transition: border-color 0.2s, box-shadow 0.2s;
   }
 
-  .faq-item:hover { border-color: rgba(108,99,255,0.3); }
+  .faq-item:hover {
+    border-color: rgba(107,75,8,0.25);
+    box-shadow: 0 4px 16px rgba(30,26,20,0.06);
+  }
 
   .faq-q {
     font-size: 16px;
     font-weight: 700;
-    color: var(--text);
+    color: var(--ink);
     margin-bottom: 8px;
   }
 
-  .faq-a { color: var(--text2); font-size: 15px; margin: 0; }
+  .faq-a { color: var(--inkSoft); font-size: 15px; margin: 0; }
 
   /* ── CONTACT ── */
   .contact-card {
     background: var(--surface);
-    border: 1px solid var(--border);
+    border: 1px solid var(--divider);
     border-radius: 20px;
     padding: 32px;
     text-align: center;
+    box-shadow: 0 4px 24px rgba(30,26,20,0.06);
   }
 
   .contact-icon {
@@ -159,14 +180,15 @@
     font-size: 20px;
     font-weight: 800;
     margin-bottom: 8px;
+    color: var(--ink);
   }
 
   .email-link {
     display: inline-block;
     margin-top: 16px;
     padding: 12px 28px;
-    background: linear-gradient(135deg, var(--brand), #8B7FFF);
-    color: white;
+    background: var(--ink);
+    color: var(--bg);
     font-family: var(--font);
     font-size: 15px;
     font-weight: 700;
@@ -175,7 +197,7 @@
     transition: opacity 0.2s, transform 0.2s;
   }
 
-  .email-link:hover { opacity: 0.85; transform: translateY(-2px); }
+  .email-link:hover { opacity: 0.82; transform: translateY(-2px); }
 
   /* ── FEATURES GRID ── */
   .features {
@@ -187,19 +209,19 @@
 
   .feature {
     background: var(--surface);
-    border: 1px solid var(--border);
+    border: 1px solid var(--divider);
     border-radius: 16px;
     padding: 20px;
   }
 
   .feature-icon { font-size: 28px; margin-bottom: 10px; display: block; }
-  .feature-title { font-size: 14px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
-  .feature-desc { font-size: 13px; color: var(--text3); margin: 0; line-height: 1.5; }
+  .feature-title { font-size: 14px; font-weight: 700; color: var(--ink); margin-bottom: 4px; }
+  .feature-desc { font-size: 13px; color: var(--inkMuted); margin: 0; line-height: 1.5; }
 
   /* ── DIVIDER ── */
   hr {
     border: none;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--divider);
     margin: 0 0 56px;
   }
 
@@ -207,7 +229,7 @@
   footer {
     padding: 32px 0 48px;
     text-align: center;
-    color: var(--text3);
+    color: var(--inkMuted);
     font-size: 13px;
   }
 
@@ -236,8 +258,15 @@
 
   <!-- HERO -->
   <header>
-    <div class="logo-mark">🧩</div>
-    <h1>Puzzle Verse Games</h1>
+    <div class="logo-mark">
+      <div class="logo-grid">
+        <div style="background:var(--word-bg)"></div>
+        <div style="background:var(--number-bg)"></div>
+        <div style="background:var(--logic-bg)"></div>
+        <div style="background:var(--visual-bg)"></div>
+      </div>
+    </div>
+    <h1>PuzzleVerse</h1>
     <p class="hero-sub">Support &amp; Help Center</p>
   </header>
 
@@ -317,14 +346,14 @@
     <div class="contact-card">
       <span class="contact-icon">✉️</span>
       <h3>We read every message</h3>
-      <p style="color:var(--text2)">Puzzle Verse Games is built by a solo developer. If you have a bug report, feature request, or just want to say hello — email us and you'll hear back personally.</p>
+      <p style="color:var(--inkSoft)">PuzzleVerse is built by a solo developer. If you have a bug report, feature request, or just want to say hello — email us and you'll hear back personally.</p>
       <a class="email-link" href="mailto:naveen.thinkbigstudio@gmail.com">support@puzzleversegames.com</a>
     </div>
   </section>
 
   <!-- FOOTER -->
   <footer>
-    <p>© 2025 Puzzle Verse Games · <a href="privacy.html">Privacy Policy</a></p>
+    <p>© 2026 PuzzleVerse · <a href="privacy.html">Privacy Policy</a></p>
   </footer>
 
 </div>
