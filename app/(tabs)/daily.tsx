@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme, type ThemeColors } from '../../src/theme/useTheme';
 import { fonts } from '../../src/theme/typography';
 import { useProgressStore } from '../../src/store/useProgressStore';
+import { GAMES } from '../../src/constants/games';
 
 // ISO week order: Mon=0 … Sun=6
 const ISO_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -36,7 +37,12 @@ function useCountdown() {
   return remaining;
 }
 
-type ChallengeState = 'done' | 'playing' | 'todo';
+type ChallengeState = 'done' | 'todo';
+
+function diffLabel(difficulty: string): string {
+  if (difficulty === 'variable') return 'Medium';
+  return difficulty.charAt(0).toUpperCase() + difficulty.slice(1);
+}
 
 interface Challenge {
   id: string;
@@ -81,28 +87,31 @@ export default function DailyScreen() {
 
   const doneCount = (wgDone ? 1 : 0) + (skDone ? 1 : 0);
 
+  const wgGame = GAMES.find(g => g.id === 'word-guess')!;
+  const skGame = GAMES.find(g => g.id === 'sudoku')!;
+
   const challenges: Challenge[] = [
     {
       id: 'word-guess',
-      name: 'Word Guess',
+      name: wgGame.name,
       cat: 'word',
       glyph: 'Aa',
       diff: 'Daily',
-      time: '~3 min',
-      state: wgDone ? 'done' : 'playing',
+      time: `~${wgGame.estimatedMinutes} min`,
+      state: wgDone ? 'done' : 'todo',
       streak: wgStreak,
       route: '/game/word-guess?mode=daily',
     },
     {
       id: 'sudoku',
-      name: 'Sudoku',
+      name: skGame.name,
       cat: 'logic',
       glyph: '≡',
       diff: 'Medium',
-      time: '~8 min',
+      time: `~${skGame.estimatedMinutes} min`,
       state: skDone ? 'done' : 'todo',
       streak: skStreak,
-      route: '/game/sudoku',
+      route: '/game/sudoku?difficulty=medium&daily=true',
     },
   ];
 
@@ -176,7 +185,6 @@ export default function DailyScreen() {
           {challenges.map(ch => {
             const tone = colors[ch.cat];
             const done = ch.state === 'done';
-            const playing = ch.state === 'playing';
             return (
               <TouchableOpacity
                 key={ch.id}
@@ -217,19 +225,9 @@ export default function DailyScreen() {
                 </View>
 
                 {/* Action button */}
-                <View style={[
-                  s.actionBtn,
-                  done  && s.actionBtnDone,
-                  playing && !done && s.actionBtnPlay,
-                  !done && !playing && s.actionBtnTodo,
-                ]}>
+                <View style={[s.actionBtn, done ? s.actionBtnDone : s.actionBtnTodo]}>
                   {done ? (
                     <Text style={[s.actionBtnText, { color: colors.success }]}>Done</Text>
-                  ) : playing ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                      <Ionicons name="play" size={11} color={colors.bg} />
-                      <Text style={[s.actionBtnText, { color: colors.bg }]}>Resume</Text>
-                    </View>
                   ) : (
                     <Text style={[s.actionBtnText, { color: colors.ink }]}>Start</Text>
                   )}
@@ -356,7 +354,6 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     borderWidth: 1.5,
     borderColor: colors.success,
   },
-  actionBtnPlay: { backgroundColor: colors.ink },
   actionBtnTodo: { backgroundColor: colors.bg },
   actionBtnText: { fontFamily: fonts.extraBold, fontSize: 13 },
 });

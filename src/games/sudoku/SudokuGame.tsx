@@ -29,19 +29,23 @@ const CELL_SIZE = GRID_SIZE / 9;
 
 interface SudokuGameProps {
   difficulty?: Difficulty;
+  daily?: boolean;
   onComplete?: (won: boolean, timeSeconds: number) => void;
 }
 
 export const SudokuGame: React.FC<SudokuGameProps> = ({
-  difficulty: initialDifficulty = 'easy',
+  difficulty: initialDifficulty,
+  daily = false,
   onComplete,
 }) => {
+  const resolvedInitialDifficulty: Difficulty = initialDifficulty ?? (daily ? 'medium' : 'easy');
   const colors = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const hapticsEnabled = useSettingsStore(s => s.hapticsEnabled);
   const showTimer = useSettingsStore(s => s.showTimer);
+  const reducedMotion = useSettingsStore(s => s.reducedMotion);
 
-  const [currentDifficulty, setCurrentDifficulty] = useState<Difficulty>(initialDifficulty);
+  const [currentDifficulty, setCurrentDifficulty] = useState<Difficulty>(resolvedInitialDifficulty);
   const [generating, setGenerating] = useState(false);
 
   const buildEmptyState = (puzzle: ReturnType<typeof generateSudoku>): SudokuState => ({
@@ -57,7 +61,7 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
   });
 
   const [state, setState] = useState<SudokuState>(() => {
-    const puzzle = generateSudoku(initialDifficulty);
+    const puzzle = generateSudoku(resolvedInitialDifficulty);
     return buildEmptyState(puzzle);
   });
 
@@ -84,21 +88,23 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
 
   const triggerShake = useCallback(() => {
     if (hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    if (reducedMotion) return;
     shakeX.value = withSequence(
       withTiming(-8, { duration: 50 }), withTiming(8, { duration: 50 }),
       withTiming(-6, { duration: 50 }), withTiming(6, { duration: 50 }),
       withTiming(-3, { duration: 50 }), withTiming(3, { duration: 50 }),
       withTiming(0, { duration: 50 }),
     );
-  }, [shakeX, hapticsEnabled]);
+  }, [shakeX, hapticsEnabled, reducedMotion]);
 
   const triggerCelebration = useCallback(() => {
     if (hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    if (reducedMotion) return;
     gridScale.value = withSequence(
       withSpring(1.04, easings.bouncySpring),
       withSpring(1.0, easings.spring),
     );
-  }, [gridScale, hapticsEnabled]);
+  }, [gridScale, hapticsEnabled, reducedMotion]);
 
   const checkComplete = useCallback((board: number[][], solution: number[][]): boolean => {
     for (let r = 0; r < 9; r++)
@@ -367,21 +373,23 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
         </View>
       </View>
 
-      {/* Difficulty selector */}
-      <View style={styles.diffRow}>
-        {(['easy', 'medium', 'hard'] as Difficulty[]).map(d => (
-          <TouchableOpacity
-            key={d}
-            style={[styles.diffPill, currentDifficulty === d && styles.diffPillActive]}
-            onPress={() => startNewGame(d)}
-            activeOpacity={0.75}
-          >
-            <Text style={[styles.diffText, currentDifficulty === d && styles.diffTextActive]}>
-              {d.charAt(0).toUpperCase() + d.slice(1)}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      {/* Difficulty selector — hidden in daily mode */}
+      {!daily && (
+        <View style={styles.diffRow}>
+          {(['easy', 'medium', 'hard'] as Difficulty[]).map(d => (
+            <TouchableOpacity
+              key={d}
+              style={[styles.diffPill, currentDifficulty === d && styles.diffPillActive]}
+              onPress={() => startNewGame(d)}
+              activeOpacity={0.75}
+            >
+              <Text style={[styles.diffText, currentDifficulty === d && styles.diffTextActive]}>
+                {d.charAt(0).toUpperCase() + d.slice(1)}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
     </View>
   );
 };

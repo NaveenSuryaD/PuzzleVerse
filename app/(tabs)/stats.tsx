@@ -70,10 +70,11 @@ const formatTime = (s: number | null): string => {
 export default function StatsScreen() {
   const colors = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
-  const { games: progressGames, overallStreak } = useProgressStore();
+  const { games: progressGames } = useProgressStore();
 
   const totalPlayed = Object.values(progressGames).reduce((acc, g) => acc + g.gamesPlayed, 0);
   const totalWon    = Object.values(progressGames).reduce((acc, g) => acc + g.gamesWon, 0);
+  const maxStreak   = Math.max(0, ...Object.values(progressGames).map(g => g.currentStreak));
   const accuracy    = totalPlayed > 0 ? Math.round((totalWon / totalPlayed) * 100) : 0;
   const bestTime    = Object.values(progressGames).reduce(
     (best, g) => g.bestTimeSeconds !== null && (best === null || g.bestTimeSeconds < best) ? g.bestTimeSeconds : best,
@@ -90,7 +91,7 @@ export default function StatsScreen() {
     const daysAgo = 6 - i;
     // Estimate: today = total played, streak days = partial count, others = 0
     const val = isToday ? totalPlayed
-      : daysAgo < overallStreak ? Math.max(1, Math.floor(totalPlayed * 0.35))
+      : daysAgo < maxStreak ? Math.max(1, Math.floor(totalPlayed * 0.35))
       : 0;
     return { label: DOW_SHORT[d.getDay()], val, isToday };
   });
@@ -98,7 +99,7 @@ export default function StatsScreen() {
 
   const achievements = ACHIEVEMENTS.map(a => ({
     ...a,
-    earned: a.check(totalWon, overallStreak, totalPlayed),
+    earned: a.check(totalWon, maxStreak, totalPlayed),
   }));
 
   return (
@@ -114,7 +115,7 @@ export default function StatsScreen() {
         <View style={s.statsRow}>
           <StatBig
             icon={<Ionicons name="flame" size={16} color="#E26A2C" />}
-            value={String(overallStreak)}
+            value={String(maxStreak)}
             label="Streak"
             tileBg={colors.word.bg}
           />

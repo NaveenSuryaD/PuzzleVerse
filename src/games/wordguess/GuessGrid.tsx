@@ -7,6 +7,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { GuessTile } from './GuessTile';
+import { useSettingsStore } from '../../store/useSettingsStore';
 import type { LetterState } from './types';
 
 const MAX_GUESSES = 6;
@@ -38,10 +39,11 @@ function GuessRow({
   bounceRowIndex: number;
   shakeRowIndex: number;
 }) {
+  const reducedMotion = useSettingsStore(s => s.reducedMotion);
   const shakeX = useSharedValue(0);
 
   React.useEffect(() => {
-    if (shakeRowIndex !== rowIndex) return;
+    if (shakeRowIndex !== rowIndex || reducedMotion) return;
     shakeX.value = withSequence(
       withTiming(-8, { duration: 50 }),
       withTiming(8, { duration: 50 }),
@@ -51,7 +53,7 @@ function GuessRow({
       withTiming(4, { duration: 50 }),
       withTiming(0, { duration: 50 }),
     );
-  }, [shakeRowIndex]);
+  }, [shakeRowIndex, reducedMotion]);
 
   const shakeStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: shakeX.value }],

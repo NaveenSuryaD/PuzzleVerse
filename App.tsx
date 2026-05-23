@@ -10,6 +10,7 @@ import {
   Nunito_900Black,
 } from '@expo-google-fonts/nunito';
 import * as SplashScreen from 'expo-splash-screen';
+import { preloadSounds } from './src/audio/sounds';
 
 // Keep splash visible until fonts are ready
 SplashScreen.preventAutoHideAsync();
@@ -38,6 +39,7 @@ export default function AppProviders({ children }: AppProvidersProps) {
   useEffect(() => {
     if (fontsLoaded || fontError) {
       SplashScreen.hideAsync();
+      preloadSounds().catch(() => {});
     }
   }, [fontsLoaded, fontError]);
 

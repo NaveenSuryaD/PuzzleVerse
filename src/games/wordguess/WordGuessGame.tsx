@@ -27,11 +27,13 @@ import { GuessGrid } from './GuessGrid';
 import { WordKeyboard } from './WordKeyboard';
 import {
   pickDailyWord,
-  pickRandomWord,
+  pickWordByDifficulty,
   isValidWord,
   evaluateGuess,
   generateShareText,
 } from './generator';
+import type { WordDifficulty } from './generator';
+import { playSound } from '../../audio/sounds';
 import type { LetterState, KeyState, GameMode, GameStatus } from './types';
 
 const MAX_GUESSES = 6;
@@ -46,27 +48,30 @@ const WIN_MESSAGES = [
 interface WordGuessGameProps {
   mode?: GameMode;
   dateOverride?: string;
+  difficulty?: WordDifficulty;
   onComplete?: (won: boolean, attempts: number) => void;
 }
 
 export const WordGuessGame: React.FC<WordGuessGameProps> = ({
   mode = 'unlimited',
   dateOverride,
+  difficulty: initialDifficulty = 'medium',
   onComplete,
 }) => {
   const colors = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const hapticsEnabled = useSettingsStore(s => s.hapticsEnabled);
+  const [difficulty, setDifficulty] = React.useState<WordDifficulty>(initialDifficulty);
 
-  const initGame = () => ({
-    answer: mode === 'daily' ? pickDailyWord(dateOverride) : pickRandomWord(),
+  const initGame = (diff: WordDifficulty = difficulty) => ({
+    answer: mode === 'daily' ? pickDailyWord(dateOverride) : pickWordByDifficulty(diff),
     guesses: [] as string[],
     evaluations: [] as LetterState[][],
     currentGuess: '',
     gameStatus: 'playing' as GameStatus,
   });
 
-  const [state, setState] = useState(initGame);
+  const [state, setState] = useState(() => initGame(initialDifficulty));
   const [letterStates, setLetterStates] = useState<Record<string, KeyState>>({});
   const [flipRowIndex, setFlipRowIndex] = useState(-1);
   const [bounceRowIndex, setBounceRowIndex] = useState(-1);
@@ -166,6 +171,7 @@ export const WordGuessGame: React.FC<WordGuessGameProps> = ({
           setFlipRowIndex(-1);
           if (won) {
             if (hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            playSound('win');
             setBounceRowIndex(rowIdx);
             setTimeout(() => {
               setBounceRowIndex(-1);
@@ -174,10 +180,18 @@ export const WordGuessGame: React.FC<WordGuessGameProps> = ({
             }, 600);
           } else if (lost) {
             if (hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+            playSound('lose');
             setTimeout(() => {
               openCompleteSheet();
               onComplete?.(false, newGuesses.length);
             }, 300);
+          } else {
+            // Play row-level sound based on best result
+            const hasCorrect = evaluation.some(s => s === 'correct');
+            const hasPresent = evaluation.some(s => s === 'present');
+            if (hasCorrect) playSound('correct');
+            else if (hasPresent) playSound('present');
+            else playSound('absent');
           }
         }, FLIP_DURATION);
 
@@ -190,7 +204,8 @@ export const WordGuessGame: React.FC<WordGuessGameProps> = ({
     });
   }, [state.gameStatus, flipRowIndex, showError, triggerShake, updateLetterStates, hapticsEnabled, openCompleteSheet, onComplete]);
 
-  const handleNewGame = useCallback(() => {
+  const handleNewGame = useCallback((newDiff?: WordDifficulty) => {
+    const d = newDiff ?? difficulty;
     if (flipTimerRef.current) clearTimeout(flipTimerRef.current);
     setFlipRowIndex(-1);
     setBounceRowIndex(-1);
@@ -198,8 +213,9 @@ export const WordGuessGame: React.FC<WordGuessGameProps> = ({
     setLetterStates({});
     setShowComplete(false);
     sheetY.value = SCREEN_HEIGHT;
-    setState(initGame);
-  }, [mode]);
+    if (newDiff && newDiff !== difficulty) setDifficulty(newDiff);
+    setState(() => initGame(d));
+  }, [mode, difficulty]);
 
   const handleShare = useCallback(async () => {
     const text = generateShareText(state.guesses.length, MAX_GUESSES, state.evaluations, state.gameStatus === 'won');
@@ -253,6 +269,24 @@ export const WordGuessGame: React.FC<WordGuessGameProps> = ({
         onKey={handleKey}
         disabled={state.gameStatus !== 'playing' || flipRowIndex !== -1}
       />
+
+      {/* Difficulty selector — unlimited mode only */}
+      {mode !== 'daily' && (
+        <View style={styles.diffRow}>
+          {(['easy', 'medium', 'hard'] as WordDifficulty[]).map(d => (
+            <TouchableOpacity
+              key={d}
+              style={[styles.diffPill, difficulty === d && styles.diffPillActive]}
+              onPress={() => handleNewGame(d)}
+              activeOpacity={0.75}
+            >
+              <Text style={[styles.diffText, difficulty === d && styles.diffTextActive]}>
+                {d.charAt(0).toUpperCase() + d.slice(1)}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
 
       {/* ── How to Play Modal ── */}
       <Modal visible={showHowToPlay} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowHowToPlay(false)}>
@@ -381,10 +415,10 @@ export const WordGuessGame: React.FC<WordGuessGameProps> = ({
               </TouchableOpacity>
               {mode === 'unlimited' ? (
                 <>
-                  <TouchableOpacity style={styles.actionSecondary} onPress={handleNewGame}>
+                  <TouchableOpacity style={styles.actionSecondary} onPress={() => handleNewGame()}>
                     <Text style={[styles.actionSecondaryText, { color: colors.ink }]}>Play Again</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={[styles.actionPrimary, { backgroundColor: colors.ink }]} onPress={handleNewGame}>
+                  <TouchableOpacity style={[styles.actionPrimary, { backgroundColor: colors.ink }]} onPress={() => handleNewGame()}>
                     <Text style={[styles.actionPrimaryText, { color: colors.bg }]}>Next Word</Text>
                     <Ionicons name="chevron-forward" size={14} color={colors.bg} />
                   </TouchableOpacity>
@@ -651,5 +685,34 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   actionPrimaryText: {
     fontFamily: fonts.extraBold,
     fontSize: 15,
+  },
+
+  diffRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 20,
+    paddingTop: 6,
+    paddingBottom: 4,
+  },
+  diffPill: {
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.rule,
+  },
+  diffPillActive: {
+    backgroundColor: colors.word.bg,
+    borderColor: colors.word.ink,
+  },
+  diffText: {
+    fontFamily: fonts.bold,
+    fontSize: 13,
+    color: colors.inkMuted,
+  },
+  diffTextActive: {
+    color: colors.word.ink,
   },
 });

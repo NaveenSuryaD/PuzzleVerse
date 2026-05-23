@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Share, Linking, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, type ThemeColors } from '../../src/theme/useTheme';
 import { fonts } from '../../src/theme/typography';
@@ -75,6 +76,7 @@ function SettingGroup({ title, children, colors }: { title: string; children: Re
 }
 
 export default function SettingsScreen() {
+  const router = useRouter();
   const colors = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
   const {
@@ -95,16 +97,13 @@ export default function SettingsScreen() {
   };
 
   const handleRate = () => {
-    // Opens App Store — replace with real App Store URL when published
-    Linking.openURL('https://apps.apple.com/app/puzzleverse').catch(() =>
+    Linking.openURL('https://apps.apple.com/app/id6748027992').catch(() =>
       Alert.alert('Coming soon', 'Rating will be available when the app is published.')
     );
   };
 
   const handlePrivacy = () => {
-    Linking.openURL('https://puzzleverse.app/privacy').catch(() =>
-      Alert.alert('Coming soon', 'Privacy policy will be available at puzzleverse.app')
-    );
+    router.push('/privacy' as any);
   };
 
   return (

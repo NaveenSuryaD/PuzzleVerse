@@ -21,7 +21,7 @@ const formatTime = (secs: number): string => {
 };
 
 export default function GameScreen() {
-  const { gameId, mode, date } = useLocalSearchParams<{ gameId: string; mode?: string; date?: string }>();
+  const { gameId, mode, date, difficulty, daily: dailyParam } = useLocalSearchParams<{ gameId: string; mode?: string; date?: string; difficulty?: string; daily?: string }>();
   const router = useRouter();
   const colors = useTheme();
   const { recordGame, recordDailyComplete } = useProgressStore();
@@ -73,20 +73,32 @@ export default function GameScreen() {
 
   const gameMode: GameMode = (mode === 'daily' || mode === 'unlimited') ? mode : 'unlimited';
   const dailyDate = date ?? todayStr();
+  const isDailyGame = dailyParam === 'true' || gameMode === 'daily';
+  const sudokuDifficulty = (difficulty === 'easy' || difficulty === 'medium' || difficulty === 'hard') ? difficulty : undefined;
 
   const subtitle = game.id === 'word-guess'
-    ? (gameMode === 'daily' ? 'Daily Challenge' : 'Unlimited')
-    : 'Medium';
+    ? (isDailyGame ? 'Daily Challenge' : 'Unlimited')
+    : isDailyGame
+      ? 'Daily · Medium'
+      : sudokuDifficulty
+        ? sudokuDifficulty.charAt(0).toUpperCase() + sudokuDifficulty.slice(1)
+        : 'Easy';
 
   const renderGame = () => {
     if (game.id === 'sudoku') {
-      return <SudokuGame onComplete={(_, t) => handleComplete(true, t)} />;
+      return (
+        <SudokuGame
+          difficulty={sudokuDifficulty}
+          daily={isDailyGame}
+          onComplete={(_, t) => isDailyGame ? handleDailyComplete(true, t, dailyDate) : handleComplete(true, t)}
+        />
+      );
     }
     if (game.id === 'word-guess') {
-      if (gameMode === 'daily') {
+      if (isDailyGame) {
         return (
           <WordGuessGame
-            mode={gameMode}
+            mode="daily"
             dateOverride={date}
             onComplete={(won, attempts) => handleDailyComplete(won, attempts * 60, dailyDate)}
           />

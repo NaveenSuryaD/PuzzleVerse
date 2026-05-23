@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, Text } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -13,6 +13,7 @@ import Animated, {
   Easing,
 } from 'react-native-reanimated';
 import { useTheme, type ThemeColors } from '../../theme/useTheme';
+import { useSettingsStore } from '../../store/useSettingsStore';
 import { easings } from '../../theme/animations';
 import { fonts } from '../../theme/typography';
 import type { LetterState } from './types';
@@ -23,12 +24,11 @@ const TILE_SIZE = 58;
 const isThemeDark = (colors: ThemeColors) => colors.bg === '#16110A';
 
 const getTileBackground = (state: LetterState, colors: ThemeColors): string => {
+  const dark = isThemeDark(colors);
   switch (state) {
     case 'correct': return colors.success;
-    // Present uses logic (yellow) category in both modes
-    case 'present': return colors.logic.bg;
-    // Absent: clearly distinct from empty surface
-    case 'absent':  return isThemeDark(colors) ? '#3A2E22' : '#C8BFB0';
+    case 'present': return dark ? colors.logic.ink   : colors.logic.bg;   // bright yellow dark / warm gold light
+    case 'absent':  return dark ? '#4A4540'           : '#C8BFB0';
     default:        return colors.surface;
   }
 };
@@ -40,8 +40,10 @@ const getTileBorderColor = (state: LetterState, hasLetter: boolean, colors: Them
 };
 
 const getTileTextColor = (state: LetterState, colors: ThemeColors): string => {
-  if (state === 'present') return colors.logic.ink;
-  if (state === 'correct') return isThemeDark(colors) ? colors.bg : '#FFFFFF';
+  const dark = isThemeDark(colors);
+  if (state === 'present') return dark ? colors.bg : colors.logic.ink;    // dark text on bright yellow
+  if (state === 'correct') return dark ? colors.bg : '#FFFFFF';
+  if (state === 'absent')  return dark ? '#9A9183' : '#5A5247';
   return colors.ink;
 };
 
@@ -63,6 +65,7 @@ export const GuessTile: React.FC<GuessTileProps> = ({
   bounceDelay,
 }) => {
   const colors = useTheme();
+  const reducedMotion = useSettingsStore(s => s.reducedMotion);
   const [colorRevealed, setColorRevealed] = useState(false);
   const flipProgress = useSharedValue(0);
   const letterScale = useSharedValue(1);
@@ -71,6 +74,7 @@ export const GuessTile: React.FC<GuessTileProps> = ({
 
   // Letter entry pop
   useEffect(() => {
+    if (reducedMotion) return;
     if (letter && state === 'tbd') {
       letterScale.value = withSequence(
         withTiming(1.12, { duration: 80 }),
@@ -79,18 +83,22 @@ export const GuessTile: React.FC<GuessTileProps> = ({
     } else if (!letter) {
       letterScale.value = 1;
     }
-  }, [letter]);
+  }, [letter, reducedMotion]);
 
   // Flip animation
   useEffect(() => {
     if (!shouldFlip) return;
+    if (reducedMotion) {
+      setColorRevealed(true);
+      return;
+    }
     setColorRevealed(false);
     flipProgress.value = 0;
     flipProgress.value = withDelay(
       flipDelay,
       withTiming(1, { duration: 300, easing: Easing.linear }),
     );
-  }, [shouldFlip, flipDelay]);
+  }, [shouldFlip, flipDelay, reducedMotion]);
 
   // Reveal color at midpoint
   useAnimatedReaction(
@@ -104,7 +112,7 @@ export const GuessTile: React.FC<GuessTileProps> = ({
 
   // Bounce on winning row
   useEffect(() => {
-    if (!shouldBounce) return;
+    if (!shouldBounce || reducedMotion) return;
     bounceY.value = withDelay(
       bounceDelay,
       withSequence(
@@ -119,7 +127,7 @@ export const GuessTile: React.FC<GuessTileProps> = ({
         withSpring(1, easings.spring),
       ),
     );
-  }, [shouldBounce, bounceDelay]);
+  }, [shouldBounce, bounceDelay, reducedMotion]);
 
   const animStyle = useAnimatedStyle(() => {
     const angle = interpolate(flipProgress.value, [0, 0.5, 1], [0, 90, 0]);
@@ -140,9 +148,9 @@ export const GuessTile: React.FC<GuessTileProps> = ({
 
   return (
     <Animated.View style={[styles.tile, { backgroundColor: bg, borderColor: border }, animStyle]}>
-      <Animated.Text style={[styles.letter, { color: textColor }]}>
+      <Text style={[styles.letter, { color: textColor }]}>
         {letter.toUpperCase()}
-      </Animated.Text>
+      </Text>
     </Animated.View>
   );
 };
@@ -151,15 +159,17 @@ const styles = StyleSheet.create({
   tile: {
     width: TILE_SIZE,
     height: TILE_SIZE,
-    alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
     borderRadius: 6,
     margin: 3,
+    overflow: 'hidden',
   },
   letter: {
     fontSize: 22,
     fontFamily: fonts.black,
-    lineHeight: 26,
+    width: TILE_SIZE,
+    textAlign: 'center',
+    lineHeight: 30,
   },
 });

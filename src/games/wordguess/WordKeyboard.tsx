@@ -5,6 +5,7 @@ import * as Haptics from 'expo-haptics';
 import { useTheme, type ThemeColors } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { useSettingsStore } from '../../store/useSettingsStore';
+import { playSound } from '../../audio/sounds';
 import type { KeyState } from './types';
 
 const ROWS = [
@@ -23,17 +24,20 @@ const SPECIAL_KEY_WIDTH = REGULAR_KEY_WIDTH * 1.55;
 const isThemeDark = (colors: ThemeColors) => colors.bg === '#16110A';
 
 const getKeyBackground = (state: KeyState, colors: ThemeColors): string => {
+  const dark = isThemeDark(colors);
   switch (state) {
     case 'correct': return colors.success;
-    case 'present': return colors.logic.bg;
-    case 'absent':  return isThemeDark(colors) ? '#3A2E22' : '#C8BFB0';
+    case 'present': return dark ? colors.logic.ink : colors.logic.bg;
+    case 'absent':  return dark ? '#4A4540'         : '#C8BFB0';
     default:        return colors.surface;
   }
 };
 
 const getKeyTextColor = (state: KeyState, colors: ThemeColors): string => {
-  if (state === 'present') return colors.logic.ink;
-  if (state === 'correct') return isThemeDark(colors) ? colors.bg : '#FFFFFF';
+  const dark = isThemeDark(colors);
+  if (state === 'present') return dark ? colors.bg : colors.logic.ink;
+  if (state === 'correct') return dark ? colors.bg : '#FFFFFF';
+  if (state === 'absent')  return dark ? '#9A9183' : '#5A5247';
   return colors.ink;
 };
 
@@ -50,6 +54,7 @@ export const WordKeyboard: React.FC<WordKeyboardProps> = ({ letterStates, onKey,
   const handleKey = (key: string) => {
     if (disabled) return;
     if (hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    playSound('key');
     onKey(key);
   };
 

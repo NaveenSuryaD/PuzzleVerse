@@ -20,6 +20,22 @@ export const pickRandomWord = (seed?: number): string => {
   return TARGET_WORDS[Math.floor(Math.random() * TARGET_WORDS.length)];
 };
 
+export type WordDifficulty = 'easy' | 'medium' | 'hard';
+
+// Easy: first 500 (most common), Medium: full target pool, Hard: less-common words
+const EASY_WORDS  = WORD_BANK.slice(0, 500);
+const HARD_WORDS  = WORD_BANK.slice(1500, TARGET_COUNT);
+
+export const pickWordByDifficulty = (difficulty: WordDifficulty): string => {
+  if (difficulty === 'easy') {
+    return EASY_WORDS[Math.floor(Math.random() * EASY_WORDS.length)];
+  }
+  if (difficulty === 'hard') {
+    return HARD_WORDS[Math.floor(Math.random() * HARD_WORDS.length)];
+  }
+  return TARGET_WORDS[Math.floor(Math.random() * TARGET_WORDS.length)];
+};
+
 // Accepts both target and obscure words as valid guesses
 export const isValidWord = (word: string): boolean => WORD_SET.has(word.toLowerCase());
 

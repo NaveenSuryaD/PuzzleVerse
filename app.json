@@ -4,7 +4,7 @@
     "slug": "puzzle-verse-games",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/app-icon.svg",
     "scheme": "puzzle-verse-games",
     "userInterfaceStyle": "automatic",
     "ios": {
