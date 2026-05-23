@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import {
   useFonts,
   Nunito_400Regular,
@@ -45,7 +46,9 @@ export default function AppProviders({ children }: AppProvidersProps) {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      {children}
+      <SafeAreaProvider>
+        {children}
+      </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }

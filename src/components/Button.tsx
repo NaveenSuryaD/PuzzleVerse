@@ -5,9 +5,8 @@ import Animated, {
   useAnimatedStyle,
   withSpring,
 } from 'react-native-reanimated';
-import { dark as colors } from '../theme/colors';
-import { spacing, radius } from '../theme/spacing';
-import { text as typography } from '../theme/typography';
+import { useTheme } from '../theme/useTheme';
+import { fonts } from '../theme/typography';
 import { easings } from '../theme/animations';
 
 interface ButtonProps {
@@ -25,6 +24,7 @@ export const Button: React.FC<ButtonProps> = ({
   loading = false,
   disabled = false,
 }) => {
+  const colors = useTheme();
   const scale = useSharedValue(1);
   const opacity = useSharedValue(1);
 
@@ -33,10 +33,26 @@ export const Button: React.FC<ButtonProps> = ({
     opacity: opacity.value,
   }));
 
+  const bgColor =
+    variant === 'primary' ? colors.ink :
+    variant === 'ghost'   ? colors.surface2 :
+    'transparent';
+
+  const textColor =
+    variant === 'primary'   ? colors.bg :
+    variant === 'secondary' ? colors.ink :
+    colors.inkSoft;
+
+  const borderColor = variant === 'secondary' ? colors.rule : 'transparent';
+
   return (
     <Animated.View style={animStyle}>
       <TouchableOpacity
-        style={[styles.button, styles[variant], disabled && styles.disabled]}
+        style={[
+          styles.button,
+          { backgroundColor: bgColor, borderColor, borderWidth: variant === 'secondary' ? 1.5 : 0 },
+          disabled && styles.disabled,
+        ]}
         onPress={onPress}
         onPressIn={() => {
           scale.value = withSpring(0.97, easings.stiffSpring);
@@ -50,9 +66,9 @@ export const Button: React.FC<ButtonProps> = ({
         activeOpacity={1}
       >
         {loading ? (
-          <ActivityIndicator color="#fff" />
+          <ActivityIndicator color={textColor} />
         ) : (
-          <Text style={[styles.label, styles[`${variant}Label` as keyof typeof styles]]}>{label}</Text>
+          <Text style={[styles.label, { color: textColor }]}>{label}</Text>
         )}
       </TouchableOpacity>
     </Animated.View>
@@ -62,36 +78,17 @@ export const Button: React.FC<ButtonProps> = ({
 const styles = StyleSheet.create({
   button: {
     height: 52,
-    paddingHorizontal: spacing.xxl,
-    borderRadius: radius.pill,
+    paddingHorizontal: 28,
+    borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  primary: {
-    backgroundColor: colors.brand.primary,
-  },
-  secondary: {
-    backgroundColor: 'transparent',
-    borderWidth: 2,
-    borderColor: colors.brand.primary,
-  },
-  ghost: {
-    backgroundColor: colors.bg.tertiary,
-  },
   disabled: {
-    opacity: 0.5,
+    opacity: 0.45,
   },
   label: {
-    ...typography.h3,
-    color: '#FFFFFF',
-  },
-  primaryLabel: {
-    color: '#FFFFFF',
-  },
-  secondaryLabel: {
-    color: colors.brand.primary,
-  },
-  ghostLabel: {
-    color: colors.text.secondary,
+    fontSize: 15,
+    fontFamily: fonts.bold,
+    letterSpacing: 0.1,
   },
 });

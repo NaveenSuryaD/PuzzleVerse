@@ -5,10 +5,11 @@ import AppProviders from '../App';
 export default function RootLayout() {
   return (
     <AppProviders>
-      <StatusBar style="light" />
+      <StatusBar style="auto" />
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="game/[gameId]" options={{ presentation: 'card' }} />
+        <Stack.Screen name="search" options={{ presentation: 'modal', animation: 'fade_from_bottom' }} />
       </Stack>
     </AppProviders>
   );

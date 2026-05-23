@@ -26,6 +26,19 @@ export const GAMES: GameDefinition[] = [
     hasDailyMode: true,
     mvpPhase: 1,
   },
+  {
+    id: 'word-guess',
+    name: 'Word Guess',
+    emoji: '🟩',
+    category: 'word',
+    tagline: 'Guess the hidden word in 6 tries',
+    description: '5-letter word. Green = right letter, right spot. Yellow = right letter, wrong spot. Gray = not in the word. 6 attempts to get it.',
+    difficulty: 'variable',
+    estimatedMinutes: 3,
+    isUnlimited: true,
+    hasDailyMode: true,
+    mvpPhase: 2,
+  },
 ];
 
 export const getGamesByCategory = (category: string): GameDefinition[] =>

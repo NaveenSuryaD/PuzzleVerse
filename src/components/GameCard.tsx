@@ -1,13 +1,13 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Dimensions } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
 } from 'react-native-reanimated';
-import { dark as colors } from '../theme/colors';
-import { spacing, radius } from '../theme/spacing';
-import { text as typography, fonts } from '../theme/typography';
+import { Ionicons } from '@expo/vector-icons';
+import { useTheme, type ThemeColors } from '../theme/useTheme';
+import { fonts } from '../theme/typography';
 import { easings } from '../theme/animations';
 import type { GameDefinition } from '../constants/games';
 
@@ -19,7 +19,29 @@ interface GameCardProps {
   isNew?: boolean;
 }
 
-const CARD_WIDTH = (Dimensions.get('window').width - spacing.lg * 2 - spacing.md) / 2;
+const SCREEN_WIDTH = Dimensions.get('window').width;
+const CARD_WIDTH = (SCREEN_WIDTH - 22 * 2 - 12) / 2;
+
+function GridGlyph({ color }: { color: string }) {
+  return (
+    <View style={{ width: 26, height: 26, flexDirection: 'row', flexWrap: 'wrap', gap: 2 }}>
+      {Array.from({ length: 9 }).map((_, i) => (
+        <View key={i} style={{
+          width: 7, height: 7, borderRadius: 1.5,
+          backgroundColor: color, opacity: i % 2 === 0 ? 1 : 0.55,
+        }} />
+      ))}
+    </View>
+  );
+}
+
+const GLYPHS: Record<string, string> = {
+  word: 'Aa',
+  number: '7',
+  logic: '≡',
+  visual: '◆',
+  classic: '♟',
+};
 
 export const GameCard: React.FC<GameCardProps> = ({
   game,
@@ -28,121 +50,114 @@ export const GameCard: React.FC<GameCardProps> = ({
   streak = 0,
   isNew = false,
 }) => {
+  const colors = useTheme();
+  const s = useMemo(() => makeStyles(colors), [colors]);
   const scale = useSharedValue(1);
+  const animStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
 
-  const animStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
-  }));
-
-  const categoryColor = colors.categories[game.category] ?? colors.brand.primary;
+  const tone = colors[game.category];
 
   return (
-    <Animated.View style={[styles.wrapper, animStyle]}>
+    <Animated.View style={[{ width: CARD_WIDTH }, animStyle]}>
       <TouchableOpacity
-        style={styles.card}
+        style={s.card}
         onPress={onPress}
         onPressIn={() => { scale.value = withSpring(0.96, easings.stiffSpring); }}
         onPressOut={() => { scale.value = withSpring(1.0, easings.spring); }}
         activeOpacity={1}
       >
-        {isNew && <View style={styles.newBadge}><Text style={styles.newBadgeText}>NEW</Text></View>}
-        <View style={[styles.iconCircle, { backgroundColor: categoryColor + '33' }]}>
-          <Text style={styles.emoji}>{game.emoji}</Text>
+        {isNew && (
+          <View style={s.newBadge}>
+            <Text style={s.newBadgeText}>NEW</Text>
+          </View>
+        )}
+        <View style={[s.glyphWell, { backgroundColor: tone.bg }]}>
+          {game.id === 'sudoku'
+            ? <GridGlyph color={tone.ink} />
+            : <Text style={[s.glyphText, { color: tone.ink }]}>
+                {GLYPHS[game.category] ?? '?'}
+              </Text>
+          }
         </View>
-        <View style={[styles.tag, { backgroundColor: categoryColor + '22' }]}>
-          <Text style={[styles.tagText, { color: categoryColor }]}>
-            {game.category.toUpperCase()}
-          </Text>
+        <View style={s.textBlock}>
+          <Text style={s.gameName} numberOfLines={1}>{game.name}</Text>
+          <Text style={s.tagline} numberOfLines={2}>{game.tagline}</Text>
         </View>
-        <Text style={styles.gameName} numberOfLines={1}>{game.name}</Text>
-        <Text style={styles.tagline} numberOfLines={2}>{game.tagline}</Text>
-        <View style={styles.statsRow}>
-          {streak > 0 && (
-            <Text style={styles.statText}>🔥 {streak}</Text>
-          )}
-          {streak > 0 && <Text style={styles.dot}>·</Text>}
-          <Text style={styles.statText}>{playsCount} plays</Text>
-        </View>
+        {streak > 0 && (
+          <View style={s.streakRow}>
+            <Ionicons name="flame" size={12} color="#E26A2C" />
+            <Text style={s.streakText}>{streak} day streak</Text>
+          </View>
+        )}
       </TouchableOpacity>
     </Animated.View>
   );
 };
 
-const styles = StyleSheet.create({
-  wrapper: {
-    width: CARD_WIDTH,
-  },
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   card: {
-    backgroundColor: colors.bg.secondary,
-    borderRadius: radius.xl,
-    padding: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.border.subtle,
-    minHeight: 160,
-    shadowColor: '#000',
+    backgroundColor: colors.surface,
+    borderRadius: 26,
+    padding: 16,
+    minHeight: 168,
+    gap: 10,
+    shadowColor: colors.ink,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    elevation: 8,
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 3,
   },
   newBadge: {
     position: 'absolute',
-    top: spacing.sm,
-    right: spacing.sm,
-    backgroundColor: colors.brand.secondary,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
+    top: 14,
+    right: 14,
+    backgroundColor: colors.ink,
+    borderRadius: 999,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
   },
   newBadgeText: {
-    ...typography.label,
-    color: '#FFFFFF',
-    fontSize: 9,
+    fontFamily: fonts.extraBold,
+    fontSize: 10,
+    color: colors.bg,
+    letterSpacing: 0.6,
   },
-  iconCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  glyphWell: {
+    width: 56,
+    height: 56,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: spacing.sm,
   },
-  emoji: {
-    fontSize: 20,
+  glyphText: {
+    fontFamily: fonts.black,
+    fontSize: 24,
+    lineHeight: 28,
   },
-  tag: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    borderRadius: radius.pill,
-    marginBottom: spacing.sm,
-  },
-  tagText: {
-    ...typography.label,
-    fontSize: 9,
+  textBlock: {
+    marginTop: 'auto' as any,
   },
   gameName: {
-    ...typography.h2,
-    color: colors.text.primary,
-    marginBottom: spacing.xs,
+    fontFamily: fonts.extraBold,
+    fontSize: 17,
+    color: colors.ink,
+    lineHeight: 20,
   },
   tagline: {
-    ...typography.small,
-    color: colors.text.secondary,
-    flex: 1,
-    marginBottom: spacing.sm,
+    fontFamily: fonts.semiBold,
+    fontSize: 13,
+    color: colors.inkMuted,
+    marginTop: 3,
+    lineHeight: 17,
   },
-  statsRow: {
+  streakRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.xs,
+    gap: 4,
   },
-  statText: {
-    ...typography.small,
-    color: colors.text.tertiary,
-  },
-  dot: {
-    ...typography.small,
-    color: colors.text.tertiary,
+  streakText: {
+    fontFamily: fonts.bold,
+    fontSize: 12,
+    color: colors.inkSoft,
   },
 });

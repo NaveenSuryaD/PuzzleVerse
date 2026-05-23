@@ -1,6 +1,6 @@
-export const getDailySeed = (gameId: string): number => {
-  const today = new Date().toISOString().slice(0, 10);
-  const str = `${gameId}-${today}`;
+export const getDailySeed = (gameId: string, dateStr?: string): number => {
+  const date = dateStr ?? new Date().toISOString().slice(0, 10);
+  const str = `${gameId}-${date}`;
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
     hash = ((hash << 5) - hash) + str.charCodeAt(i);

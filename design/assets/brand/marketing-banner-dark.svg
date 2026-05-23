@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900">
+  <rect width="1600" height="900" fill="#16110A"></rect>
+  <circle cx="1480" cy="160" r="220" fill="#FFD2B5" opacity=".22"></circle>
+  <circle cx="1700" cy="780" r="280" fill="#D2C2FF" opacity=".22"></circle>
+  <circle cx="1340" cy="760" r="120" fill="#C3E0BD" opacity=".30"></circle>
+  <rect x="1380" y="380" width="160" height="160" rx="34" fill="#FFE49C" opacity=".32" transform="rotate(16 1460 460)"></rect>
+
+  <g transform="translate(100 120)">
+    <rect width="84" height="84" rx="18" fill="#FBF6EE"></rect>
+    <g transform="translate(42 42) rotate(-5) translate(-28 -28)">
+      <rect width="56" height="56" rx="12" fill="#16110A"></rect>
+      <g transform="translate(9 9)">
+        <rect x="0" y="0" width="18" height="18" rx="4" fill="#FFD2B5"></rect>
+        <rect x="21" y="0" width="18" height="18" rx="4" fill="#FFE49C"></rect>
+        <rect x="0" y="21" width="18" height="18" rx="4" fill="#C3E0BD"></rect>
+        <rect x="21" y="21" width="18" height="18" rx="4" fill="#D2C2FF"></rect>
+      </g>
+    </g>
+    <text x="104" y="56" font-family="Nunito, system-ui, sans-serif" font-weight="900" font-size="42" letter-spacing="-1.3" fill="#FBF6EE">PuzzleVerse</text>
+  </g>
+
+  <text x="100" y="450" font-family="Nunito, system-ui, sans-serif" font-weight="900" font-size="130" letter-spacing="-4" fill="#FBF6EE">Every puzzle.</text>
+  <text x="100" y="590" font-family="Nunito, system-ui, sans-serif" font-weight="900" font-size="130" letter-spacing="-4" fill="#FBF6EE">Unlimited.</text>
+  <text x="100" y="670" font-family="Nunito, system-ui, sans-serif" font-weight="600" font-size="36" fill="#CFC6B3">102 games · daily challenges · no ads ever</text>
+
+  <g transform="translate(100 720)">
+    <rect width="320" height="84" rx="42" fill="#FBF6EE"></rect>
+    <text x="160" y="56" text-anchor="middle" font-family="Nunito, system-ui, sans-serif" font-weight="800" font-size="30" fill="#16110A">Download free</text>
+  </g>
+</svg>

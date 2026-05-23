@@ -1,24 +1,38 @@
 import { Tabs } from 'expo-router';
+import { Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { dark as colors } from '../../src/theme/colors';
+import { useTheme } from '../../src/theme/useTheme';
 import { fonts } from '../../src/theme/typography';
 
 export default function TabLayout() {
+  const colors = useTheme();
+  const bottomInset = Platform.OS === 'ios' ? 18 : 12;
+
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: colors.bg.secondary,
-          borderTopColor: colors.border.subtle,
-          borderTopWidth: 1,
-          height: 60,
-          paddingBottom: 8,
+          position: 'absolute',
+          bottom: bottomInset,
+          left: 14,
+          right: 14,
+          borderRadius: 28,
+          height: 62,
+          paddingBottom: 4,
+          paddingTop: 4,
+          backgroundColor: colors.surface,
+          borderTopWidth: 0,
+          elevation: 10,
+          shadowColor: colors.ink,
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.08,
+          shadowRadius: 16,
         },
-        tabBarActiveTintColor: colors.brand.primary,
-        tabBarInactiveTintColor: colors.text.tertiary,
+        tabBarActiveTintColor: colors.ink,
+        tabBarInactiveTintColor: colors.inkMuted,
         tabBarLabelStyle: {
-          fontFamily: fonts.semiBold,
+          fontFamily: fonts.extraBold,
           fontSize: 11,
         },
       }}
@@ -27,8 +41,8 @@ export default function TabLayout() {
         name="index"
         options={{
           title: 'Home',
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? 'home' : 'home-outline'} size={22} color={color} />
+          tabBarIcon: ({ focused, color }) => (
+            <Ionicons name={focused ? 'home' : 'home-outline'} size={24} color={color} />
           ),
         }}
       />
@@ -36,8 +50,8 @@ export default function TabLayout() {
         name="daily"
         options={{
           title: 'Daily',
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? 'calendar' : 'calendar-outline'} size={22} color={color} />
+          tabBarIcon: ({ focused, color }) => (
+            <Ionicons name={focused ? 'calendar' : 'calendar-outline'} size={24} color={color} />
           ),
         }}
       />
@@ -45,8 +59,8 @@ export default function TabLayout() {
         name="stats"
         options={{
           title: 'Stats',
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? 'bar-chart' : 'bar-chart-outline'} size={22} color={color} />
+          tabBarIcon: ({ focused, color }) => (
+            <Ionicons name={focused ? 'bar-chart' : 'bar-chart-outline'} size={24} color={color} />
           ),
         }}
       />
@@ -54,8 +68,8 @@ export default function TabLayout() {
         name="settings"
         options={{
           title: 'Settings',
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? 'settings' : 'settings-outline'} size={22} color={color} />
+          tabBarIcon: ({ focused, color }) => (
+            <Ionicons name={focused ? 'settings' : 'settings-outline'} size={24} color={color} />
           ),
         }}
       />

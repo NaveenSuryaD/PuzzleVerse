@@ -4,7 +4,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface SettingsState {
   theme: 'dark' | 'light' | 'system';
-  accentColor: string;
   soundEnabled: boolean;
   hapticsEnabled: boolean;
   showTimer: boolean;
@@ -20,8 +19,7 @@ interface SettingsState {
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
-      theme: 'dark',
-      accentColor: '#6C63FF',
+      theme: 'light',
       soundEnabled: false,
       hapticsEnabled: true,
       showTimer: true,
@@ -34,7 +32,7 @@ export const useSettingsStore = create<SettingsState>()(
       setReducedMotion: (v) => set({ reducedMotion: v }),
     }),
     {
-      name: 'puzzleverse-settings',
+      name: 'puzzleverse-settings-v2',
       storage: createJSONStorage(() => AsyncStorage),
     }
   )
