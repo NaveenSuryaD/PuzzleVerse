@@ -52,12 +52,72 @@ const bigStat = StyleSheet.create({
   label: { fontFamily: fonts.bold, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 },
 });
 
-const ACHIEVEMENTS = [
-  { name: 'First Solve',  cat: 'word'    as CategoryKey, check: (won: number) => won >= 1 },
-  { name: '7-day Streak', cat: 'logic'   as CategoryKey, check: (_: number, streak: number) => streak >= 7 },
-  { name: '10 Games',     cat: 'number'  as CategoryKey, check: (won: number, _: number, played: number) => played >= 10 },
-  { name: 'No Hints',     cat: 'visual'  as CategoryKey, check: () => false },
-  { name: '100 Puzzles',  cat: 'classic' as CategoryKey, check: (won: number, _: number, played: number) => played >= 100 },
+const ACHIEVEMENTS: {
+  name: string;
+  cat: CategoryKey;
+  icon: string;
+  check: (won: number, streak: number, played: number, wordWon: number, dailyWon: number) => boolean;
+}[] = [
+  {
+    name: 'First Solve',
+    cat: 'word',
+    icon: 'star-outline',
+    check: (won) => won >= 1,
+  },
+  {
+    name: '10 Games',
+    cat: 'number',
+    icon: 'game-controller-outline',
+    check: (_w, _s, played) => played >= 10,
+  },
+  {
+    name: '7-Day Streak',
+    cat: 'logic',
+    icon: 'flame-outline',
+    check: (_w, streak) => streak >= 7,
+  },
+  {
+    name: 'Word Wizard',
+    cat: 'word',
+    icon: 'text-outline',
+    check: (_w, _s, _p, wordWon) => wordWon >= 10,
+  },
+  {
+    name: 'Speed Demon',
+    cat: 'visual',
+    icon: 'flash-outline',
+    check: (_w, _s, played) => played >= 1, // unlocked by parent having bestTime < 120
+  },
+  {
+    name: 'Daily Devotee',
+    cat: 'classic',
+    icon: 'calendar-outline',
+    check: (_w, _s, _p, _ww, dailyWon) => dailyWon >= 7,
+  },
+  {
+    name: '30 Day Streak',
+    cat: 'logic',
+    icon: 'bonfire-outline',
+    check: (_w, streak) => streak >= 30,
+  },
+  {
+    name: '50 Puzzles',
+    cat: 'number',
+    icon: 'trophy-outline',
+    check: (_w, _s, played) => played >= 50,
+  },
+  {
+    name: 'Centurion',
+    cat: 'classic',
+    icon: 'ribbon-outline',
+    check: (_w, _s, played) => played >= 100,
+  },
+  {
+    name: 'All Games',
+    cat: 'visual',
+    icon: 'apps-outline',
+    check: (_w, _s, played) => played >= 200,
+  },
 ];
 
 const formatTime = (s: number | null): string => {
@@ -97,10 +157,21 @@ export default function StatsScreen() {
   });
   const maxBar = Math.max(...last7.map(d => d.val), 1);
 
-  const achievements = ACHIEVEMENTS.map(a => ({
-    ...a,
-    earned: a.check(totalWon, maxStreak, totalPlayed),
-  }));
+  const totalWordWon = Object.values(progressGames)
+    .filter(g => ['word-guess', 'word-search', 'group-it', 'hangman'].includes(g.gameId))
+    .reduce((acc, g) => acc + g.gamesWon, 0);
+
+  const totalDailyWon = Object.values(progressGames)
+    .reduce((acc, g) => acc + (g.completedDailyDates?.length ?? 0), 0);
+
+  const hasBestTimeUnder2Min = Object.values(progressGames)
+    .some(g => g.bestTimeSeconds !== null && g.bestTimeSeconds < 120);
+
+  const achievements = ACHIEVEMENTS.map(a => {
+    let earned = a.check(totalWon, maxStreak, totalPlayed, totalWordWon, totalDailyWon);
+    if (a.name === 'Speed Demon') earned = hasBestTimeUnder2Min;
+    return { ...a, earned };
+  });
 
   return (
     <SafeAreaView style={s.container} edges={['top']}>
@@ -175,7 +246,15 @@ export default function StatsScreen() {
                 <View style={[s.gameWell, { backgroundColor: tone.bg }]}>
                   {game.id === 'sudoku'
                     ? <GridGlyph color={tone.ink} />
-                    : <Text style={{ fontFamily: fonts.black, fontSize: 18, color: tone.ink }}>Aa</Text>
+                    : game.id === 'word-search'
+                      ? <Ionicons name="search" size={20} color={tone.ink} />
+                      : game.id === 'group-it'
+                        ? <Ionicons name="grid" size={20} color={tone.ink} />
+                        : game.id === 'hangman'
+                          ? <Text style={{ fontFamily: fonts.black, fontSize: 18, color: tone.ink }}>_</Text>
+                          : game.id === 'number-bonds'
+                            ? <Text style={{ fontFamily: fonts.black, fontSize: 20, color: tone.ink }}>+</Text>
+                            : <Text style={{ fontFamily: fonts.black, fontSize: 18, color: tone.ink }}>Aa</Text>
                   }
                 </View>
                 <View style={s.gameInfo}>
@@ -209,7 +288,7 @@ export default function StatsScreen() {
               <View key={a.name} style={[s.achieveCard, !a.earned && s.achieveLocked]}>
                 <View style={[s.achieveCircle, { backgroundColor: a.earned ? tone.bg : colors.rule }]}>
                   {a.earned
-                    ? <Ionicons name="trophy-outline" size={22} color={tone.ink} />
+                    ? <Ionicons name={a.icon as any} size={22} color={tone.ink} />
                     : <Text style={[s.achieveQ, { color: colors.inkMuted }]}>?</Text>
                   }
                 </View>

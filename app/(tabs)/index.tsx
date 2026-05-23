@@ -22,7 +22,7 @@ import { GAMES, getGamesByMVP } from '../../src/constants/games';
 import type { GameDefinition } from '../../src/constants/games';
 import { useProgressStore } from '../../src/store/useProgressStore';
 
-const ALL_GAMES = getGamesByMVP(2);
+const ALL_GAMES = getGamesByMVP(7);
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const TILE_WIDTH = (SCREEN_WIDTH - 22 * 2 - 12) / 2;
 
@@ -70,6 +70,30 @@ function GridGlyph({ color }: { color: string }) {
 
 function getGameGlyph(game: GameDefinition, color: string) {
   if (game.id === 'sudoku') return <GridGlyph color={color} />;
+  if (game.id === 'word-search') {
+    return <Ionicons name="search" size={24} color={color} />;
+  }
+  if (game.id === 'group-it') {
+    return <Ionicons name="grid" size={24} color={color} />;
+  }
+  if (game.id === 'hangman') {
+    return <Text style={{ fontFamily: fonts.black, fontSize: 22, color, lineHeight: 26 }}>_</Text>;
+  }
+  if (game.id === 'number-bonds') {
+    return <Text style={{ fontFamily: fonts.black, fontSize: 22, color, lineHeight: 26 }}>+</Text>;
+  }
+  if (game.id === 'crossword-mini') {
+    return <Ionicons name="pencil" size={22} color={color} />;
+  }
+  if (game.id === 'pattern-recog') {
+    return <Ionicons name="eye-outline" size={22} color={color} />;
+  }
+  if (game.id === 'sequence-fill') {
+    return <Text style={{ fontFamily: fonts.black, fontSize: 20, color, lineHeight: 24 }}>…</Text>;
+  }
+  if (game.id === 'math-sprint') {
+    return <Ionicons name="flash" size={22} color={color} />;
+  }
   return <CategoryGlyph cat={game.category} color={color} />;
 }
 

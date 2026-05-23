@@ -1,0 +1,24 @@
+export const HANGMAN_WORDS: string[] = [
+  // Animals
+  'DOLPHIN', 'PENGUIN', 'GIRAFFE', 'ELEPHANT', 'RABBIT', 'TIGER', 'PARROT',
+  'KOALA', 'SQUIRREL', 'HAMSTER', 'LEOPARD', 'GORILLA', 'CHEETAH', 'BUFFALO',
+  'LOBSTER', 'OCTOPUS', 'PELICAN', 'WALRUS', 'PANTHER', 'JAGUAR',
+  // Food
+  'PIZZA', 'MANGO', 'CHEESE', 'WAFFLE', 'COOKIE', 'NOODLE', 'BURGER',
+  'PRETZEL', 'BROWNIE', 'BAGEL', 'SUSHI', 'DONUT', 'BISCUIT',
+  'CUPCAKE', 'MUFFIN', 'CARAMEL', 'LEMONADE',
+  // Nature
+  'FOREST', 'RIVER', 'OCEAN', 'DESERT', 'ISLAND', 'VOLCANO', 'GLACIER',
+  'THUNDER', 'RAINBOW', 'CANYON', 'LAGOON', 'MEADOW', 'SUMMIT',
+  'VALLEY', 'JUNGLE', 'TUNDRA',
+  // Travel & Places
+  'AIRPORT', 'COMPASS', 'LUGGAGE', 'TOURIST', 'JOURNEY', 'VOYAGE',
+  'HARBOR', 'BRIDGE', 'CASTLE', 'TEMPLE', 'MUSEUM', 'MARKET',
+  // Science & Tech
+  'GRAVITY', 'MAGNET', 'FOSSIL', 'PLANET', 'COMET', 'LASER', 'ROBOT',
+  'OXYGEN', 'GALAXY', 'ORBIT', 'ROCKET', 'CIRCUIT',
+];
+
+export function getRandomWord(): string {
+  return HANGMAN_WORDS[Math.floor(Math.random() * HANGMAN_WORDS.length)];
+}
