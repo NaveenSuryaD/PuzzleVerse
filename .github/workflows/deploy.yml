@@ -7,7 +7,8 @@ name: EAS Build & Submit
 #   GOOGLE_PLAY_SERVICE_ACCOUNT_JSON — Android store submission
 #   APPLE_APP_SPECIFIC_PASSWORD — iOS App Store submission
 # ─────────────────────────────────────────────────────────────────────────────
-
+permissions:
+  contents: read
 on:
   push:
     branches: [main]
