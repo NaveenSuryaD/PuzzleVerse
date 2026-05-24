@@ -23,20 +23,23 @@ const SPECIAL_KEY_WIDTH = REGULAR_KEY_WIDTH * 1.55;
 
 const isThemeDark = (colors: ThemeColors) => colors.bg === '#16110A';
 
-const getKeyBackground = (state: KeyState, colors: ThemeColors): string => {
+const CB_CORRECT = '#F5793A';
+const CB_PRESENT = '#85C0F9';
+
+const getKeyBackground = (state: KeyState, colors: ThemeColors, colorBlind: boolean): string => {
   const dark = isThemeDark(colors);
   switch (state) {
-    case 'correct': return colors.success;
-    case 'present': return dark ? colors.logic.ink : colors.logic.bg;
-    case 'absent':  return dark ? '#4A4540'         : '#C8BFB0';
+    case 'correct': return colorBlind ? CB_CORRECT : colors.success;
+    case 'present': return colorBlind ? CB_PRESENT : (dark ? colors.logic.ink : colors.logic.bg);
+    case 'absent':  return dark ? '#4A4540' : '#C8BFB0';
     default:        return colors.surface;
   }
 };
 
-const getKeyTextColor = (state: KeyState, colors: ThemeColors): string => {
+const getKeyTextColor = (state: KeyState, colors: ThemeColors, colorBlind: boolean): string => {
   const dark = isThemeDark(colors);
-  if (state === 'present') return dark ? colors.bg : colors.logic.ink;
-  if (state === 'correct') return dark ? colors.bg : '#FFFFFF';
+  if (state === 'correct') return colorBlind ? '#FFFFFF' : (dark ? colors.bg : '#FFFFFF');
+  if (state === 'present') return colorBlind ? '#1E1A14' : (dark ? colors.bg : colors.logic.ink);
   if (state === 'absent')  return dark ? '#9A9183' : '#5A5247';
   return colors.ink;
 };
@@ -50,6 +53,7 @@ interface WordKeyboardProps {
 export const WordKeyboard: React.FC<WordKeyboardProps> = ({ letterStates, onKey, disabled }) => {
   const colors = useTheme();
   const hapticsEnabled = useSettingsStore(s => s.hapticsEnabled);
+  const colorBlind = useSettingsStore(s => s.colorBlindMode);
 
   const handleKey = (key: string) => {
     if (disabled) return;
@@ -65,8 +69,8 @@ export const WordKeyboard: React.FC<WordKeyboardProps> = ({ letterStates, onKey,
           {row.map(key => {
             const isSpecial = key === 'ENTER' || key === '⌫';
             const keyState: KeyState = letterStates[key] ?? 'unused';
-            const bg = isSpecial ? colors.surface2 : getKeyBackground(keyState, colors);
-            const textColor = isSpecial ? colors.ink : getKeyTextColor(keyState, colors);
+            const bg = isSpecial ? colors.surface2 : getKeyBackground(keyState, colors, colorBlind);
+            const textColor = isSpecial ? colors.ink : getKeyTextColor(keyState, colors, colorBlind);
             const width = isSpecial ? SPECIAL_KEY_WIDTH : REGULAR_KEY_WIDTH;
 
             return (

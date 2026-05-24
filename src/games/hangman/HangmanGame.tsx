@@ -7,6 +7,8 @@ import { useTheme, type ThemeColors } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { getRandomWord } from './wordbank';
 import type { GameStatus, LetterStatus } from './types';
+import * as Haptics from 'expo-haptics';
+import { playSound } from '../../audio/sounds';
 
 const MAX_WRONG = 6;
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -21,6 +23,7 @@ const ROWS = [
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
+  onBack?: () => void;
 }
 
 function HangmanDrawing({ wrongCount, colors }: { wrongCount: number; colors: ThemeColors }) {
@@ -79,7 +82,7 @@ const draw = StyleSheet.create({
   bar: { position: 'absolute', borderRadius: 3 },
 });
 
-export function HangmanGame({ onComplete }: Props) {
+export function HangmanGame({ onComplete, onBack }: Props) {
   const colors = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
   const isDark = colors.bg === '#16110A';
@@ -117,6 +120,7 @@ export function HangmanGame({ onComplete }: Props) {
     completedRef.current = true;
     if (timerRef.current) clearInterval(timerRef.current);
     setGameStatus(won ? 'won' : 'lost');
+    playSound(won ? 'win' : 'lose');
     onComplete(won, elapsedRef.current);
   }, [onComplete]);
 
@@ -128,8 +132,10 @@ export function HangmanGame({ onComplete }: Props) {
 
   const guess = useCallback((letter: string) => {
     if (gameStatus !== 'playing' || guessed.has(letter)) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    playSound(word.includes(letter) ? 'correct' : 'absent');
     setGuessed(prev => new Set([...prev, letter]));
-  }, [gameStatus, guessed]);
+  }, [gameStatus, guessed, word]);
 
   const letterStatus = useCallback((l: string): LetterStatus => {
     if (!guessed.has(l)) return 'idle';
@@ -139,6 +145,13 @@ export function HangmanGame({ onComplete }: Props) {
   const wrongLetters = useMemo(
     () => [...guessed].filter(l => !word.includes(l)).join('  '),
     [guessed, word],
+  );
+
+  // Top 5 most common English letters that haven't been guessed yet
+  const FREQ_ORDER = 'ETAOINSHRDLCUMWFGYPBVKJXQZ';
+  const frequencyHints = useMemo(
+    () => FREQ_ORDER.split('').filter(l => !guessed.has(l)).slice(0, 5),
+    [guessed],
   );
 
   const restart = useCallback(() => {
@@ -265,6 +278,15 @@ export function HangmanGame({ onComplete }: Props) {
             >
               <Text style={[s.btnText, { color: colors.bg }]}>Play Again</Text>
             </TouchableOpacity>
+            {onBack && (
+              <TouchableOpacity
+                style={[s.btn, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: colors.rule, marginTop: 8 }]}
+                onPress={onBack}
+                activeOpacity={0.8}
+              >
+                <Text style={[s.btnText, { color: colors.inkSoft }]}>Go Back</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </Modal>

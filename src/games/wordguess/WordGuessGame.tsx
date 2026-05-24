@@ -21,6 +21,7 @@ import Animated, {
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, type ThemeColors } from '../../theme/useTheme';
 import { useSettingsStore } from '../../store/useSettingsStore';
+import { useProgressStore } from '../../store/useProgressStore';
 import { fonts } from '../../theme/typography';
 import { easings } from '../../theme/animations';
 import { GuessGrid } from './GuessGrid';
@@ -50,6 +51,7 @@ interface WordGuessGameProps {
   dateOverride?: string;
   difficulty?: WordDifficulty;
   onComplete?: (won: boolean, attempts: number) => void;
+  onBack?: () => void;
 }
 
 export const WordGuessGame: React.FC<WordGuessGameProps> = ({
@@ -57,11 +59,16 @@ export const WordGuessGame: React.FC<WordGuessGameProps> = ({
   dateOverride,
   difficulty: initialDifficulty = 'medium',
   onComplete,
+  onBack,
 }) => {
   const colors = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const hapticsEnabled = useSettingsStore(s => s.hapticsEnabled);
+  const colorBlindMode = useSettingsStore(s => s.colorBlindMode);
+  const setColorBlindMode = useSettingsStore(s => s.setColorBlindMode);
+  const wordGuessProgress = useProgressStore(s => s.games['word-guess']);
   const [difficulty, setDifficulty] = React.useState<WordDifficulty>(initialDifficulty);
+  const [hardMode, setHardMode] = useState(false);
 
   const initGame = (diff: WordDifficulty = difficulty) => ({
     answer: mode === 'daily' ? pickDailyWord(dateOverride) : pickWordByDifficulty(diff),
@@ -155,6 +162,29 @@ export const WordGuessGame: React.FC<WordGuessGameProps> = ({
           return prev;
         }
 
+        // Hard mode: must use all revealed hints from previous guesses
+        if (hardMode && prev.evaluations.length > 0) {
+          const guessLetters = guess.split('');
+          for (let g = 0; g < prev.guesses.length; g++) {
+            const prevLetters = prev.guesses[g].split('');
+            const prevEval = prev.evaluations[g];
+            for (let i = 0; i < WORD_LENGTH; i++) {
+              if (prevEval[i] === 'correct' && guessLetters[i] !== prevLetters[i]) {
+                showError(`${i + 1}${['st','nd','rd','th','th'][i]} letter must be ${prevLetters[i].toUpperCase()}`);
+                triggerShake(prev.guesses.length);
+                return prev;
+              }
+            }
+            for (let i = 0; i < WORD_LENGTH; i++) {
+              if (prevEval[i] === 'present' && !guessLetters.includes(prevLetters[i])) {
+                showError(`Guess must contain ${prevLetters[i].toUpperCase()}`);
+                triggerShake(prev.guesses.length);
+                return prev;
+              }
+            }
+          }
+        }
+
         const evaluation = evaluateGuess(guess, prev.answer);
         const newGuesses = [...prev.guesses, guess];
         const newEvaluations = [...prev.evaluations, evaluation];
@@ -202,7 +232,7 @@ export const WordGuessGame: React.FC<WordGuessGameProps> = ({
       if (!/^[A-Za-z]$/.test(key)) return prev;
       return { ...prev, currentGuess: prev.currentGuess + key.toUpperCase() };
     });
-  }, [state.gameStatus, flipRowIndex, showError, triggerShake, updateLetterStates, hapticsEnabled, openCompleteSheet, onComplete]);
+  }, [state.gameStatus, flipRowIndex, hardMode, showError, triggerShake, updateLetterStates, hapticsEnabled, openCompleteSheet, onComplete]);
 
   const handleNewGame = useCallback((newDiff?: WordDifficulty) => {
     const d = newDiff ?? difficulty;
@@ -270,22 +300,52 @@ export const WordGuessGame: React.FC<WordGuessGameProps> = ({
         disabled={state.gameStatus !== 'playing' || flipRowIndex !== -1}
       />
 
-      {/* Difficulty selector — unlimited mode only */}
+      {/* Color blind mode toggle */}
+      <TouchableOpacity
+        style={[styles.hardModeRow, colorBlindMode && { backgroundColor: colors.classic.bg }]}
+        onPress={() => setColorBlindMode(!colorBlindMode)}
+        activeOpacity={0.8}
+      >
+        <Ionicons name="eye-outline" size={15} color={colorBlindMode ? colors.classic.ink : colors.inkMuted} />
+        <Text style={[styles.hardModeText, colorBlindMode && { color: colors.classic.ink }]}>
+          Color Blind Mode {colorBlindMode ? 'ON' : 'OFF'}
+        </Text>
+      </TouchableOpacity>
+
+      {/* Difficulty selector + Hard Mode — unlimited mode only */}
       {mode !== 'daily' && (
-        <View style={styles.diffRow}>
-          {(['easy', 'medium', 'hard'] as WordDifficulty[]).map(d => (
-            <TouchableOpacity
-              key={d}
-              style={[styles.diffPill, difficulty === d && styles.diffPillActive]}
-              onPress={() => handleNewGame(d)}
-              activeOpacity={0.75}
-            >
-              <Text style={[styles.diffText, difficulty === d && styles.diffTextActive]}>
-                {d.charAt(0).toUpperCase() + d.slice(1)}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        <>
+          <View style={styles.diffRow}>
+            {(['easy', 'medium', 'hard'] as WordDifficulty[]).map(d => (
+              <TouchableOpacity
+                key={d}
+                style={[styles.diffPill, difficulty === d && styles.diffPillActive]}
+                onPress={() => handleNewGame(d)}
+                activeOpacity={0.75}
+              >
+                <Text style={[styles.diffText, difficulty === d && styles.diffTextActive]}>
+                  {d.charAt(0).toUpperCase() + d.slice(1)}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <TouchableOpacity
+            style={[styles.hardModeRow, hardMode && { backgroundColor: colors.word.bg }]}
+            onPress={() => {
+              if (state.guesses.length > 0) {
+                showError('Start a new game to toggle Hard Mode');
+                return;
+              }
+              setHardMode(h => !h);
+            }}
+            activeOpacity={0.8}
+          >
+            <Ionicons name={hardMode ? 'flame' : 'flame-outline'} size={15} color={hardMode ? colors.word.ink : colors.inkMuted} />
+            <Text style={[styles.hardModeText, hardMode && { color: colors.word.ink }]}>
+              Hard Mode {hardMode ? 'ON' : 'OFF'}
+            </Text>
+          </TouchableOpacity>
+        </>
       )}
 
       {/* ── How to Play Modal ── */}
@@ -399,11 +459,39 @@ export const WordGuessGame: React.FC<WordGuessGameProps> = ({
               ))}
             </View>
 
+            {/* Guess distribution chart */}
+            {(wordGuessProgress?.guessDistribution?.some(n => n > 0)) && (
+              <View style={styles.distWrap}>
+                <Text style={styles.distTitle}>GUESS DISTRIBUTION</Text>
+                {[1,2,3,4,5,6].map(n => {
+                  const dist = wordGuessProgress?.guessDistribution ?? [0,0,0,0,0,0];
+                  const count = dist[n - 1] ?? 0;
+                  const max = Math.max(...dist, 1);
+                  const isCurrent = state.gameStatus === 'won' && state.guesses.length === n;
+                  return (
+                    <View key={n} style={styles.distRow}>
+                      <Text style={styles.distNum}>{n}</Text>
+                      <View style={[
+                        styles.distBar,
+                        { width: `${Math.max(8, (count / max) * 100)}%` as any },
+                        isCurrent ? { backgroundColor: colorBlindMode ? '#F5793A' : colors.success } : { backgroundColor: colors.inkMuted },
+                      ]}>
+                        <Text style={styles.distBarText}>{count}</Text>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+
             {/* Emoji share grid */}
             <View style={styles.emojiGrid}>
               {state.evaluations.map((row, ri) => (
                 <Text key={ri} style={styles.emojiRow}>
-                  {row.map(s => s === 'correct' ? '🟩' : s === 'present' ? '🟨' : '⬛').join('')}
+                  {row.map(s =>
+                    s === 'correct' ? (colorBlindMode ? '🟧' : '🟩') :
+                    s === 'present' ? (colorBlindMode ? '🟦' : '🟨') : '⬛'
+                  ).join('')}
                 </Text>
               ))}
             </View>
@@ -413,16 +501,16 @@ export const WordGuessGame: React.FC<WordGuessGameProps> = ({
               <TouchableOpacity style={styles.shareBtn} onPress={handleShare}>
                 <Ionicons name="share-outline" size={20} color={colors.ink} />
               </TouchableOpacity>
+              {onBack && (
+                <TouchableOpacity style={styles.actionSecondary} onPress={onBack}>
+                  <Text style={[styles.actionSecondaryText, { color: colors.ink }]}>Go Back</Text>
+                </TouchableOpacity>
+              )}
               {mode === 'unlimited' ? (
-                <>
-                  <TouchableOpacity style={styles.actionSecondary} onPress={() => handleNewGame()}>
-                    <Text style={[styles.actionSecondaryText, { color: colors.ink }]}>Play Again</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={[styles.actionPrimary, { backgroundColor: colors.ink }]} onPress={() => handleNewGame()}>
-                    <Text style={[styles.actionPrimaryText, { color: colors.bg }]}>Next Word</Text>
-                    <Ionicons name="chevron-forward" size={14} color={colors.bg} />
-                  </TouchableOpacity>
-                </>
+                <TouchableOpacity style={[styles.actionPrimary, { backgroundColor: colors.ink }]} onPress={() => handleNewGame()}>
+                  <Text style={[styles.actionPrimaryText, { color: colors.bg }]}>Next Word</Text>
+                  <Ionicons name="chevron-forward" size={14} color={colors.bg} />
+                </TouchableOpacity>
               ) : (
                 <View style={[styles.actionPrimary, { flex: 1, backgroundColor: colors.rule }]}>
                   <Ionicons name="calendar-outline" size={16} color={colors.inkSoft} />
@@ -637,6 +725,44 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     letterSpacing: 0.5,
     opacity: 0.8,
   },
+  distWrap: {
+    width: '100%',
+    gap: 4,
+    marginBottom: 4,
+  },
+  distTitle: {
+    fontFamily: fonts.extraBold,
+    fontSize: 11,
+    letterSpacing: 0.8,
+    color: colors.inkMuted,
+    marginBottom: 6,
+  },
+  distRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    height: 22,
+  },
+  distNum: {
+    fontFamily: fonts.extraBold,
+    fontSize: 14,
+    color: colors.ink,
+    width: 12,
+    textAlign: 'right',
+  },
+  distBar: {
+    height: '100%',
+    borderRadius: 4,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    paddingRight: 8,
+    minWidth: 22,
+  },
+  distBarText: {
+    fontFamily: fonts.bold,
+    fontSize: 12,
+    color: '#FFFFFF',
+  },
   emojiGrid: {
     gap: 2,
     alignItems: 'center',
@@ -714,5 +840,26 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   },
   diffTextActive: {
     color: colors.word.ink,
+  },
+  hardModeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 7,
+    marginHorizontal: 'auto' as any,
+    borderRadius: 999,
+    alignSelf: 'center',
+    marginTop: 2,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.rule,
+  },
+  hardModeText: {
+    fontFamily: fonts.bold,
+    fontSize: 12,
+    color: colors.inkMuted,
+    letterSpacing: 0.3,
   },
 });

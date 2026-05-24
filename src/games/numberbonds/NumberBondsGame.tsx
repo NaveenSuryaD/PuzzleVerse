@@ -4,15 +4,17 @@ import { useTheme, type ThemeColors } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { generatePuzzle } from './generator';
 import type { Tile } from './types';
+import * as Haptics from 'expo-haptics';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const TILE_SIZE = Math.floor((SCREEN_W - 32 - 3 * 8) / 4);
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
+  onBack?: () => void;
 }
 
-export function NumberBondsGame({ onComplete }: Props) {
+export function NumberBondsGame({ onComplete, onBack }: Props) {
   const colors = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
 
@@ -151,6 +153,15 @@ export function NumberBondsGame({ onComplete }: Props) {
             >
               <Text style={[s.btnText, { color: colors.bg }]}>Play Again</Text>
             </TouchableOpacity>
+            {onBack && (
+              <TouchableOpacity
+                style={[s.btn, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: colors.rule, marginTop: 8 }]}
+                onPress={onBack}
+                activeOpacity={0.8}
+              >
+                <Text style={[s.btnText, { color: colors.inkSoft }]}>Go Back</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </Modal>

@@ -6,19 +6,21 @@ import { useTheme, type ThemeColors } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { generateSequences } from './generator';
 import type { SequencePuzzle } from './types';
+import * as Haptics from 'expo-haptics';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const PAD_KEYS = ['7','8','9','4','5','6','1','2','3','⌫','0','✓'];
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
+  onBack?: () => void;
 }
 
-export function SequenceFillGame({ onComplete }: Props) {
+export function SequenceFillGame({ onComplete, onBack }: Props) {
   const colors = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
 
-  const [puzzles] = useState(() => generateSequences(8));
+  const [puzzles, setPuzzles] = useState(() => generateSequences(8));
   const [pIdx, setPIdx] = useState(0);
   const [bIdx, setBIdx] = useState(0); // which blank we're filling
   const [input, setInput] = useState('');
@@ -163,11 +165,30 @@ export function SequenceFillGame({ onComplete }: Props) {
             <Text style={s.modalSub}>All {puzzles.length} sequences solved</Text>
             <TouchableOpacity
               style={[s.btn, { backgroundColor: colors.ink }]}
-              onPress={() => onComplete(true, elapsedRef.current)}
+              onPress={() => {
+                setDone(false);
+                completedRef.current = false;
+                setPIdx(0);
+                setBIdx(0);
+                setInput('');
+                setSolved(Array(8).fill(false));
+                elapsedRef.current = 0;
+                setPuzzles(generateSequences(8));
+                timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              }}
               activeOpacity={0.8}
             >
               <Text style={[s.btnText, { color: colors.bg }]}>Play Again</Text>
             </TouchableOpacity>
+            {onBack && (
+              <TouchableOpacity
+                style={[s.btn, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: colors.rule, marginTop: 8 }]}
+                onPress={onBack}
+                activeOpacity={0.8}
+              >
+                <Text style={[s.btnText, { color: colors.inkSoft }]}>Go Back</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </Modal>
