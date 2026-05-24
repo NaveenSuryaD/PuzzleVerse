@@ -1,27 +1,16 @@
 import React, { useMemo } from 'react';
-import { View, Text, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Dimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, type ThemeColors } from '../../src/theme/useTheme';
 import { fonts } from '../../src/theme/typography';
 import { useProgressStore } from '../../src/store/useProgressStore';
 import { GAMES } from '../../src/constants/games';
+import { GameGlyph } from '../../src/components/GameGlyph';
+
+const { width: SCREEN_W } = Dimensions.get('window');
 
 type CategoryKey = 'word' | 'number' | 'logic' | 'visual' | 'classic';
-
-function GridGlyph({ color, size = 22 }: { color: string; size?: number }) {
-  const dot = Math.floor((size - 4) / 3);
-  return (
-    <View style={{ width: size, height: size, flexDirection: 'row', flexWrap: 'wrap', gap: 2 }}>
-      {Array.from({ length: 9 }).map((_, i) => (
-        <View key={i} style={{
-          width: dot, height: dot, borderRadius: 1,
-          backgroundColor: color, opacity: i % 2 === 0 ? 1 : 0.55,
-        }} />
-      ))}
-    </View>
-  );
-}
 
 function StatBig({
   icon, value, label, tileBg,
@@ -132,6 +121,9 @@ export default function StatsScreen() {
   const s = useMemo(() => makeStyles(colors), [colors]);
   const { games: progressGames } = useProgressStore();
 
+  const playedGames = GAMES.filter(g => (progressGames[g.id]?.gamesPlayed ?? 0) > 0)
+    .sort((a, b) => (progressGames[b.id]?.gamesPlayed ?? 0) - (progressGames[a.id]?.gamesPlayed ?? 0));
+
   const totalPlayed = Object.values(progressGames).reduce((acc, g) => acc + g.gamesPlayed, 0);
   const totalWon    = Object.values(progressGames).reduce((acc, g) => acc + g.gamesWon, 0);
   const maxStreak   = Math.max(0, ...Object.values(progressGames).map(g => g.currentStreak));
@@ -141,21 +133,33 @@ export default function StatsScreen() {
     null as number | null,
   );
 
-  // Bar chart: last 7 days ending today, chronological left→right
-  const DOW_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  // 30-day heatmap: build a daily activity map from lastPlayedDate across all games
   const now = new Date();
-  const last7 = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(now);
-    d.setDate(now.getDate() - (6 - i)); // 6 days ago … today
-    const isToday = i === 6;
-    const daysAgo = 6 - i;
-    // Estimate: today = total played, streak days = partial count, others = 0
-    const val = isToday ? totalPlayed
-      : daysAgo < maxStreak ? Math.max(1, Math.floor(totalPlayed * 0.35))
-      : 0;
-    return { label: DOW_SHORT[d.getDay()], val, isToday };
-  });
-  const maxBar = Math.max(...last7.map(d => d.val), 1);
+  const todayISO = now.toISOString().slice(0, 10);
+
+  // Build a set of ISO dates when ANY game was played (estimate from streak data)
+  const playedDates = useMemo(() => {
+    const dates = new Set<string>();
+    Object.values(progressGames).forEach(g => {
+      if (g.lastPlayedDate) dates.add(g.lastPlayedDate);
+      (g.completedDailyDates ?? []).forEach(d => dates.add(d));
+    });
+    return dates;
+  }, [progressGames]);
+
+  const heatmapDays = useMemo(() => {
+    return Array.from({ length: 30 }, (_, i) => {
+      const d = new Date(now);
+      d.setDate(now.getDate() - (29 - i));
+      const iso = d.toISOString().slice(0, 10);
+      const isToday = iso === todayISO;
+      const hasActivity = playedDates.has(iso);
+      return { iso, isToday, hasActivity, dow: d.getDay() };
+    });
+  }, [playedDates, todayISO]);
+
+  const DOW_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+  const CELL_SIZE = Math.floor((SCREEN_W - 22 * 2 - 36) / 30);
 
   const totalWordWon = Object.values(progressGames)
     .filter(g => ['word-guess', 'word-search', 'group-it', 'hangman'].includes(g.gameId))
@@ -210,70 +214,68 @@ export default function StatsScreen() {
           />
         </View>
 
-        {/* Activity chart */}
+        {/* 30-day activity heatmap */}
         <View style={s.chartCard}>
           <View style={s.chartHeader}>
-            <Text style={s.chartTitle}>This week</Text>
-            <Text style={s.chartSub}>{totalPlayed} solved</Text>
+            <Text style={s.chartTitle}>30-day activity</Text>
+            <View style={s.streakPill}>
+              <Ionicons name="flame" size={13} color="#E26A2C" />
+              <Text style={s.streakPillText}>{maxStreak} day streak</Text>
+            </View>
           </View>
-          <View style={s.barsRow}>
-            {last7.map((d, i) => (
-              <View key={i} style={s.barCol}>
-                <View style={[
-                  s.barFill,
-                  {
-                    height: Math.max((d.val / maxBar) * 72, 4),
-                    backgroundColor: d.isToday ? colors.ink : colors.logic.bg,
-                  },
-                ]} />
-                <Text style={[s.barLabel, { color: d.isToday ? colors.ink : colors.inkMuted }]}>
-                  {d.label}
-                </Text>
-              </View>
+          <View style={s.heatmapRow}>
+            {heatmapDays.map((d, i) => (
+              <View
+                key={i}
+                style={[
+                  s.heatCell,
+                  { width: CELL_SIZE, height: CELL_SIZE, borderRadius: Math.max(2, CELL_SIZE * 0.25) },
+                  d.hasActivity
+                    ? { backgroundColor: colors.number.ink + 'CC' }
+                    : { backgroundColor: colors.rule },
+                  d.isToday && { borderWidth: 2, borderColor: colors.ink },
+                ]}
+              />
             ))}
+          </View>
+          <View style={s.heatmapLegend}>
+            <Text style={s.heatmapLegendText}>29 days ago</Text>
+            <Text style={s.heatmapLegendText}>Today</Text>
           </View>
         </View>
 
-        {/* By game — always show all games */}
-        <Text style={s.sectionEyebrow}>BY GAME</Text>
-        <View style={s.gameList}>
-          {GAMES.map((game, i) => {
-            const p = progressGames[game.id];
-            const cat = game.category as CategoryKey;
-            const tone = colors[cat];
-            return (
-              <View key={game.id} style={[s.gameRow, i < GAMES.length - 1 && s.gameRowBorder]}>
-                <View style={[s.gameWell, { backgroundColor: tone.bg }]}>
-                  {game.id === 'sudoku'
-                    ? <GridGlyph color={tone.ink} />
-                    : game.id === 'word-search'
-                      ? <Ionicons name="search" size={20} color={tone.ink} />
-                      : game.id === 'group-it'
-                        ? <Ionicons name="grid" size={20} color={tone.ink} />
-                        : game.id === 'hangman'
-                          ? <Text style={{ fontFamily: fonts.black, fontSize: 18, color: tone.ink }}>_</Text>
-                          : game.id === 'number-bonds'
-                            ? <Text style={{ fontFamily: fonts.black, fontSize: 20, color: tone.ink }}>+</Text>
-                            : <Text style={{ fontFamily: fonts.black, fontSize: 18, color: tone.ink }}>Aa</Text>
-                  }
-                </View>
-                <View style={s.gameInfo}>
-                  <Text style={s.gameName}>{game.name}</Text>
-                  <Text style={s.gameStats}>
-                    {p?.gamesPlayed ?? 0} games · best {formatTime(p?.bestTimeSeconds ?? null)}
-                  </Text>
-                </View>
-                {(p?.currentStreak ?? 0) > 0 && (
-                  <View style={s.streakBadge}>
-                    <Ionicons name="flame" size={13} color="#E26A2C" />
-                    <Text style={s.streakText}>{p!.currentStreak}</Text>
+        {/* By game — only games played at least once */}
+        {playedGames.length > 0 && (
+          <>
+            <Text style={s.sectionEyebrow}>BY GAME</Text>
+            <View style={s.gameList}>
+              {playedGames.map((game, i) => {
+                const p = progressGames[game.id];
+                const cat = game.category as CategoryKey;
+                const tone = colors[cat];
+                return (
+                  <View key={game.id} style={[s.gameRow, i < playedGames.length - 1 && s.gameRowBorder]}>
+                    <View style={[s.gameWell, { backgroundColor: tone.bg }]}>
+                      <GameGlyph id={game.id} color={tone.ink} />
+                    </View>
+                    <View style={s.gameInfo}>
+                      <Text style={s.gameName}>{game.name}</Text>
+                      <Text style={s.gameStats}>
+                        {p?.gamesPlayed ?? 0} played · {p?.gamesWon ?? 0} won · best {formatTime(p?.bestTimeSeconds ?? null)}
+                      </Text>
+                    </View>
+                    {(p?.currentStreak ?? 0) > 0 && (
+                      <View style={s.streakBadge}>
+                        <Ionicons name="flame" size={13} color="#E26A2C" />
+                        <Text style={s.streakText}>{p!.currentStreak}</Text>
+                      </View>
+                    )}
                   </View>
-                )}
-                <Ionicons name="chevron-forward" size={14} color={colors.inkMuted} />
-              </View>
-            );
-          })}
-        </View>
+                );
+              })}
+            </View>
+          </>
+        )}
 
         {/* Achievements */}
         <Text style={s.sectionEyebrow}>ACHIEVEMENTS</Text>
@@ -327,18 +329,19 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     shadowOpacity: 0.05, shadowRadius: 12, elevation: 3,
   },
   chartHeader: {
-    flexDirection: 'row', alignItems: 'baseline',
+    flexDirection: 'row', alignItems: 'center',
     justifyContent: 'space-between', marginBottom: 14,
   },
   chartTitle: { fontFamily: fonts.extraBold, fontSize: 14, color: colors.ink },
-  chartSub: { fontFamily: fonts.bold, fontSize: 12, color: colors.inkMuted },
-  barsRow: {
-    flexDirection: 'row', alignItems: 'flex-end',
-    justifyContent: 'space-between', gap: 6, height: 88,
+  streakPill: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.word.bg, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
+  streakPillText: { fontFamily: fonts.extraBold, fontSize: 12, color: colors.word.ink },
+  heatmapRow: {
+    flexDirection: 'row', flexWrap: 'nowrap',
+    gap: 3, justifyContent: 'space-between',
   },
-  barCol: { flex: 1, alignItems: 'center', gap: 6, justifyContent: 'flex-end' },
-  barFill: { width: '100%', borderRadius: 8 },
-  barLabel: { fontFamily: fonts.bold, fontSize: 11 },
+  heatCell: { aspectRatio: 1 },
+  heatmapLegend: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 },
+  heatmapLegendText: { fontFamily: fonts.semiBold, fontSize: 10, color: colors.inkMuted },
 
   sectionEyebrow: {
     fontFamily: fonts.extraBold, fontSize: 13, color: colors.inkMuted,

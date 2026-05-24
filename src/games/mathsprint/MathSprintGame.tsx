@@ -6,6 +6,10 @@ import { useTheme, type ThemeColors } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { generateQuestions } from './generator';
 import type { Question } from './types';
+import * as Haptics from 'expo-haptics';
+import { playSound } from '../../audio/sounds';
+
+type Difficulty = 'easy' | 'medium' | 'hard';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const PAD_KEYS = ['7','8','9','4','5','6','1','2','3','⌫','0','✓'];
@@ -13,13 +17,15 @@ const PENALTY = 10;
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
+  onBack?: () => void;
 }
 
-export function MathSprintGame({ onComplete }: Props) {
+export function MathSprintGame({ onComplete, onBack }: Props) {
   const colors = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
 
-  const [questions] = useState(() => generateQuestions('medium'));
+  const [difficulty, setDifficulty] = useState<Difficulty>('medium');
+  const [questions, setQuestions] = useState(() => generateQuestions('medium'));
   const [idx, setIdx] = useState(0);
   const [input, setInput] = useState('');
   const [correct, setCorrect] = useState(0);
@@ -41,6 +47,7 @@ export function MathSprintGame({ onComplete }: Props) {
     completedRef.current = true;
     if (timerRef.current) clearInterval(timerRef.current);
     setDone(true);
+    playSound('win');
     onComplete(true, elapsedRef.current);
   }, [onComplete]);
 
@@ -51,10 +58,14 @@ export function MathSprintGame({ onComplete }: Props) {
     if (userAns === q.answer) {
       setCorrect(c => c + 1);
       setFlash('correct');
+      playSound('correct');
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } else {
       setWrong(w => w + 1);
       elapsedRef.current += PENALTY;
       setFlash('wrong');
+      playSound('absent');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     }
     setTimeout(() => setFlash(null), 350);
     setInput('');
@@ -157,11 +168,30 @@ export function MathSprintGame({ onComplete }: Props) {
             </View>
             <TouchableOpacity
               style={[s.btn, { backgroundColor: colors.ink }]}
-              onPress={() => onComplete(true, elapsedRef.current)}
+              onPress={() => {
+                setDone(false);
+                completedRef.current = false;
+                setIdx(0);
+                setInput('');
+                setCorrect(0);
+                setWrong(0);
+                elapsedRef.current = 0;
+                setQuestions(generateQuestions(difficulty));
+                timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              }}
               activeOpacity={0.8}
             >
               <Text style={[s.btnText, { color: colors.bg }]}>Play Again</Text>
             </TouchableOpacity>
+            {onBack && (
+              <TouchableOpacity
+                style={[s.btn, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: colors.rule, marginTop: 8 }]}
+                onPress={onBack}
+                activeOpacity={0.8}
+              >
+                <Text style={[s.btnText, { color: colors.inkSoft }]}>Go Back</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </Modal>

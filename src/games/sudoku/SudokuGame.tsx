@@ -61,6 +61,29 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
   });
 
   const [state, setState] = useState<SudokuState | null>(null);
+  const [canUndo, setCanUndo] = useState(false);
+
+  // Undo stack — stored in a ref to avoid stale closures in handlers
+  interface HistoryEntry {
+    board: number[][];
+    notes: Set<number>[][];
+    errors: boolean[][];
+  }
+  const undoStackRef = useRef<HistoryEntry[]>([]);
+  const stateRef = useRef<SudokuState | null>(null);
+  useEffect(() => { stateRef.current = state; }, [state]);
+
+  const pushUndo = useCallback((s: SudokuState) => {
+    undoStackRef.current = [
+      ...undoStackRef.current.slice(-49),
+      {
+        board: s.board.map(row => [...row]),
+        notes: s.notes.map(row => row.map(cell => new Set(cell))),
+        errors: s.errors.map(row => [...row]),
+      },
+    ];
+    setCanUndo(true);
+  }, []);
 
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -127,7 +150,26 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
     setState(prev => prev ? { ...prev, selectedCell: [row, col] } : prev);
   }, [hapticsEnabled]);
 
+  const handleUndo = useCallback(() => {
+    const stack = undoStackRef.current;
+    if (stack.length === 0) return;
+    const entry = stack[stack.length - 1];
+    undoStackRef.current = stack.slice(0, -1);
+    setCanUndo(stack.length > 1);
+    setState(prev => prev ? {
+      ...prev,
+      board: entry.board,
+      notes: entry.notes,
+      errors: entry.errors,
+      isComplete: false,
+    } : prev);
+    if (hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, [hapticsEnabled]);
+
   const handleNumberPress = useCallback((num: number) => {
+    const cur = stateRef.current;
+    if (cur) pushUndo(cur);
+
     setState(prev => {
       if (!prev || !prev.selectedCell) return prev;
       const [r, c] = prev.selectedCell;
@@ -145,6 +187,18 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
       newBoard[r][c] = num;
       const newNotes = prev.notes.map(row => row.map(cell => new Set(cell)));
       newNotes[r][c] = new Set();
+
+      // Auto-remove pencil marks in same row, col, and 3×3 box
+      const boxR = Math.floor(r / 3) * 3;
+      const boxC = Math.floor(c / 3) * 3;
+      for (let i = 0; i < 9; i++) {
+        newNotes[r][i].delete(num);
+        newNotes[i][c].delete(num);
+      }
+      for (let i = 0; i < 3; i++)
+        for (let j = 0; j < 3; j++)
+          newNotes[boxR + i][boxC + j].delete(num);
+
       const newErrors = prev.errors.map(row => [...row]);
       const isWrong = num !== 0 && num !== prev.puzzle.solution[r][c];
       newErrors[r][c] = isWrong;
@@ -165,9 +219,11 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
 
       return { ...prev, board: newBoard, notes: newNotes, errors: newErrors, isComplete };
     });
-  }, [hapticsEnabled, triggerShake, triggerCelebration, checkComplete, onComplete, elapsedSeconds]);
+  }, [hapticsEnabled, pushUndo, triggerShake, triggerCelebration, checkComplete, onComplete, elapsedSeconds]);
 
   const handleErase = useCallback(() => {
+    const cur = stateRef.current;
+    if (cur) pushUndo(cur);
     if (hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setState(prev => {
       if (!prev || !prev.selectedCell) return prev;
@@ -181,7 +237,7 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
       newNotes[r][c] = new Set();
       return { ...prev, board: newBoard, errors: newErrors, notes: newNotes };
     });
-  }, [hapticsEnabled]);
+  }, [hapticsEnabled, pushUndo]);
 
   const togglePencil = useCallback(() => {
     if (hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -194,6 +250,8 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
     setElapsedSeconds(0);
     setCurrentDifficulty(d);
     setGenerating(true);
+    undoStackRef.current = [];
+    setCanUndo(false);
     genTimeoutRef.current = setTimeout(() => {
       const puzzle = generateSudoku(d);
       setState(buildEmptyState(puzzle));
@@ -380,6 +438,7 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
         <View style={styles.actionRow}>
           <ActionBtn icon="pencil-outline" label="Notes" active={state?.pencilMode ?? false} colors={colors} styles={styles} onPress={togglePencil} />
           <ActionBtn icon="backspace-outline" label="Erase" active={false} colors={colors} styles={styles} onPress={handleErase} />
+          <ActionBtn icon="arrow-undo-outline" label="Undo" active={false} disabled={!canUndo} colors={colors} styles={styles} onPress={handleUndo} />
           <ActionBtn icon="refresh-outline" label="New" active={false} colors={colors} styles={styles} onPress={() => startNewGame(currentDifficulty)} />
         </View>
       </View>
@@ -409,16 +468,22 @@ interface ActionBtnProps {
   icon: React.ComponentProps<typeof Ionicons>['name'];
   label: string;
   active: boolean;
+  disabled?: boolean;
   colors: ThemeColors;
   styles: ReturnType<typeof makeStyles>;
   onPress: () => void;
 }
 
-const ActionBtn = ({ icon, label, active, colors, styles, onPress }: ActionBtnProps) => (
+const ActionBtn = ({ icon, label, active, disabled, colors, styles, onPress }: ActionBtnProps) => (
   <TouchableOpacity
-    style={[styles.actionButton, active && { backgroundColor: colors.logic.bg, borderColor: colors.logic.ink }]}
+    style={[
+      styles.actionButton,
+      active && { backgroundColor: colors.logic.bg, borderColor: colors.logic.ink },
+      disabled && { opacity: 0.35 },
+    ]}
     onPress={onPress}
     activeOpacity={0.75}
+    disabled={disabled}
   >
     <Ionicons name={icon} size={17} color={active ? colors.logic.ink : colors.inkSoft} />
     <Text style={[styles.actionButtonText, active && { color: colors.logic.ink }]}>{label}</Text>

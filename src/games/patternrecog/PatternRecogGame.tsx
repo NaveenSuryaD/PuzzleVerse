@@ -4,18 +4,20 @@ import { useTheme, type ThemeColors } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { generatePatterns } from './generator';
 import { PatternItemView } from './PatternItem';
+import * as Haptics from 'expo-haptics';
 
 const TOTAL = 8;
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
+  onBack?: () => void;
 }
 
-export function PatternRecogGame({ onComplete }: Props) {
+export function PatternRecogGame({ onComplete, onBack }: Props) {
   const colors = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
 
-  const [puzzles] = useState(() => generatePatterns(TOTAL));
+  const [puzzles, setPuzzles] = useState(() => generatePatterns(TOTAL));
   const [idx, setIdx] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
   const [correct, setCorrect] = useState(0);
@@ -132,11 +134,29 @@ export function PatternRecogGame({ onComplete }: Props) {
             </View>
             <TouchableOpacity
               style={[s.btn, { backgroundColor: colors.ink }]}
-              onPress={() => onComplete(true, elapsedRef.current)}
+              onPress={() => {
+                setDone(false);
+                completedRef.current = false;
+                setIdx(0);
+                setSelected(null);
+                setCorrect(0);
+                elapsedRef.current = 0;
+                setPuzzles(generatePatterns(TOTAL));
+                timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              }}
               activeOpacity={0.8}
             >
               <Text style={[s.btnText, { color: colors.bg }]}>Play Again</Text>
             </TouchableOpacity>
+            {onBack && (
+              <TouchableOpacity
+                style={[s.btn, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: colors.rule, marginTop: 8 }]}
+                onPress={onBack}
+                activeOpacity={0.8}
+              >
+                <Text style={[s.btnText, { color: colors.inkSoft }]}>Go Back</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </Modal>

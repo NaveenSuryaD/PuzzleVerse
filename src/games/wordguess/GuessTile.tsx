@@ -20,15 +20,18 @@ import type { LetterState } from './types';
 
 const TILE_SIZE = 58;
 
-// Dark mode: bg === '#16110A'
 const isThemeDark = (colors: ThemeColors) => colors.bg === '#16110A';
 
-const getTileBackground = (state: LetterState, colors: ThemeColors): string => {
+// Color-blind safe: orange for correct, cyan-blue for present
+const CB_CORRECT = '#F5793A';
+const CB_PRESENT = '#85C0F9';
+
+const getTileBackground = (state: LetterState, colors: ThemeColors, colorBlind: boolean): string => {
   const dark = isThemeDark(colors);
   switch (state) {
-    case 'correct': return colors.success;
-    case 'present': return dark ? colors.logic.ink   : colors.logic.bg;   // bright yellow dark / warm gold light
-    case 'absent':  return dark ? '#4A4540'           : '#C8BFB0';
+    case 'correct': return colorBlind ? CB_CORRECT : colors.success;
+    case 'present': return colorBlind ? CB_PRESENT : (dark ? colors.logic.ink : colors.logic.bg);
+    case 'absent':  return dark ? '#4A4540' : '#C8BFB0';
     default:        return colors.surface;
   }
 };
@@ -39,10 +42,10 @@ const getTileBorderColor = (state: LetterState, hasLetter: boolean, colors: Them
   return 'transparent';
 };
 
-const getTileTextColor = (state: LetterState, colors: ThemeColors): string => {
+const getTileTextColor = (state: LetterState, colors: ThemeColors, colorBlind: boolean): string => {
   const dark = isThemeDark(colors);
-  if (state === 'present') return dark ? colors.bg : colors.logic.ink;    // dark text on bright yellow
-  if (state === 'correct') return dark ? colors.bg : '#FFFFFF';
+  if (state === 'correct') return colorBlind ? '#FFFFFF' : (dark ? colors.bg : '#FFFFFF');
+  if (state === 'present') return colorBlind ? '#1E1A14' : (dark ? colors.bg : colors.logic.ink);
   if (state === 'absent')  return dark ? '#9A9183' : '#5A5247';
   return colors.ink;
 };
@@ -66,6 +69,7 @@ export const GuessTile: React.FC<GuessTileProps> = ({
 }) => {
   const colors = useTheme();
   const reducedMotion = useSettingsStore(s => s.reducedMotion);
+  const colorBlind = useSettingsStore(s => s.colorBlindMode);
   const [colorRevealed, setColorRevealed] = useState(false);
   const flipProgress = useSharedValue(0);
   const letterScale = useSharedValue(1);
@@ -142,9 +146,9 @@ export const GuessTile: React.FC<GuessTileProps> = ({
   });
 
   const displayState: LetterState = colorRevealed ? state : (letter ? 'tbd' : 'empty');
-  const bg = getTileBackground(displayState, colors);
+  const bg = getTileBackground(displayState, colors, colorBlind);
   const border = getTileBorderColor(displayState, !!letter, colors);
-  const textColor = getTileTextColor(displayState, colors);
+  const textColor = getTileTextColor(displayState, colors, colorBlind);
 
   return (
     <Animated.View style={[styles.tile, { backgroundColor: bg, borderColor: border }, animStyle]}>

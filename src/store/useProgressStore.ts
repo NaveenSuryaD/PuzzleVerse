@@ -11,7 +11,9 @@ interface GameProgress {
   maxStreak: number;
   lastPlayedDate: string;
   totalHintsUsed: number;
-  completedDailyDates: string[];  // ISO dates when daily mode was won
+  completedDailyDates: string[];
+  guessDistribution: number[];    // [count at 1 guess, 2, 3, 4, 5, 6] — WordGuess only
+  cleanSolves: number;            // wins with 0 hints
 }
 
 interface ProgressState {
@@ -20,8 +22,9 @@ interface ProgressState {
   lastOverallPlayDate: string;
   achievements: string[];
   favoritedGames: string[];
-  recordGame: (gameId: string, won: boolean, timeSeconds: number) => void;
+  recordGame: (gameId: string, won: boolean, timeSeconds: number, hintsUsed?: number, guessCount?: number) => void;
   recordDailyComplete: (gameId: string, date: string, won: boolean) => void;
+  incrementHints: (gameId: string) => void;
   toggleFavorite: (gameId: string) => void;
   unlockAchievement: (achievementId: string) => void;
 }
@@ -44,7 +47,7 @@ export const useProgressStore = create<ProgressState>()(
       achievements: [],
       favoritedGames: [],
 
-      recordGame: (gameId, won, timeSeconds) => {
+      recordGame: (gameId, won, timeSeconds, hintsUsed = 0, guessCount) => {
         const state = get();
         const existing: GameProgress = state.games[gameId] ?? {
           gameId,
@@ -56,7 +59,13 @@ export const useProgressStore = create<ProgressState>()(
           lastPlayedDate: '',
           totalHintsUsed: 0,
           completedDailyDates: [],
+          guessDistribution: [0,0,0,0,0,0],
+          cleanSolves: 0,
         };
+        const dist = existing.guessDistribution ?? [0,0,0,0,0,0];
+        if (won && guessCount !== undefined && guessCount >= 1 && guessCount <= 6) {
+          dist[guessCount - 1] = (dist[guessCount - 1] ?? 0) + 1;
+        }
         const todayStr = today();
 
         // Per-game streak
@@ -66,8 +75,11 @@ export const useProgressStore = create<ProgressState>()(
         const updated: GameProgress = {
           ...existing,
           completedDailyDates: existing.completedDailyDates ?? [],
+          guessDistribution: dist,
           gamesPlayed: existing.gamesPlayed + 1,
           gamesWon: existing.gamesWon + (won ? 1 : 0),
+          cleanSolves: (existing.cleanSolves ?? 0) + (won && hintsUsed === 0 ? 1 : 0),
+          totalHintsUsed: existing.totalHintsUsed + hintsUsed,
           bestTimeSeconds: won
             ? existing.bestTimeSeconds === null
               ? timeSeconds
@@ -116,6 +128,13 @@ export const useProgressStore = create<ProgressState>()(
             [gameId]: { ...existing, completedDailyDates: [...completedDailyDates, date] },
           },
         });
+      },
+
+      incrementHints: (gameId) => {
+        const state = get();
+        const existing = state.games[gameId];
+        if (!existing) return;
+        set({ games: { ...state.games, [gameId]: { ...existing, totalHintsUsed: existing.totalHintsUsed + 1 } } });
       },
 
       toggleFavorite: (gameId) => {

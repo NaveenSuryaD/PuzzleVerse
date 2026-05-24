@@ -38,17 +38,23 @@ function useCountdown() {
 }
 
 type ChallengeState = 'done' | 'todo';
+type CategoryKey = 'word' | 'number' | 'logic' | 'visual' | 'classic';
 
 function diffLabel(difficulty: string): string {
-  if (difficulty === 'variable') return 'Medium';
+  if (difficulty === 'variable') return 'Daily';
   return difficulty.charAt(0).toUpperCase() + difficulty.slice(1);
+}
+
+function dailyRoute(id: string): string {
+  if (id === 'word-guess') return '/game/word-guess?mode=daily';
+  if (id === 'sudoku') return '/game/sudoku?difficulty=medium&daily=true';
+  return `/game/${id}?daily=true`;
 }
 
 interface Challenge {
   id: string;
   name: string;
-  cat: 'word' | 'logic';
-  glyph: string;
+  cat: CategoryKey;
   diff: string;
   time: string;
   state: ChallengeState;
@@ -77,43 +83,27 @@ export default function DailyScreen() {
   const now = new Date();
   const dateLabel = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
 
-  // Word Guess daily state
-  const wgDone = (progressGames['word-guess']?.completedDailyDates ?? []).includes(todayDate);
-  const wgStreak = progressGames['word-guess']?.currentStreak ?? 0;
+  const dailyGames = getGamesByMVP(7).filter(g => g.hasDailyMode);
 
-  // Sudoku state — done if played today
-  const skDone = progressGames['sudoku']?.lastPlayedDate === todayDate;
-  const skStreak = progressGames['sudoku']?.currentStreak ?? 0;
+  const challenges: Challenge[] = dailyGames.map(game => {
+    const prog = progressGames[game.id];
+    // Games that track completedDailyDates use that; others use lastPlayedDate
+    const done = (prog?.completedDailyDates?.length ?? 0) > 0
+      ? (prog?.completedDailyDates ?? []).includes(todayDate)
+      : prog?.lastPlayedDate === todayDate;
+    return {
+      id: game.id,
+      name: game.name,
+      cat: game.category as CategoryKey,
+      diff: diffLabel(game.difficulty),
+      time: `~${game.estimatedMinutes} min`,
+      state: done ? 'done' : 'todo',
+      streak: prog?.currentStreak ?? 0,
+      route: dailyRoute(game.id),
+    };
+  });
 
-  const doneCount = (wgDone ? 1 : 0) + (skDone ? 1 : 0);
-
-  const wgGame = GAMES.find(g => g.id === 'word-guess')!;
-  const skGame = GAMES.find(g => g.id === 'sudoku')!;
-
-  const challenges: Challenge[] = [
-    {
-      id: 'word-guess',
-      name: wgGame.name,
-      cat: 'word',
-      glyph: 'Aa',
-      diff: 'Daily',
-      time: `~${wgGame.estimatedMinutes} min`,
-      state: wgDone ? 'done' : 'todo',
-      streak: wgStreak,
-      route: '/game/word-guess?mode=daily',
-    },
-    {
-      id: 'sudoku',
-      name: skGame.name,
-      cat: 'logic',
-      glyph: '≡',
-      diff: 'Medium',
-      time: `~${skGame.estimatedMinutes} min`,
-      state: skDone ? 'done' : 'todo',
-      streak: skStreak,
-      route: '/game/sudoku?difficulty=medium&daily=true',
-    },
-  ];
+  const doneCount = challenges.filter(c => c.state === 'done').length;
 
   // 7-day week strip: Mon–Sun of current ISO week
   const todayDow = now.getDay(); // 0=Sun, 1=Mon … 6=Sat
@@ -125,7 +115,7 @@ export default function DailyScreen() {
     const d = new Date(dateStr + 'T00:00:00');
     const isToday = offset === 0;
     const isFuture = offset > 0;
-    const isDone = (progressGames['word-guess']?.completedDailyDates ?? []).includes(dateStr);
+    const isDone = dailyGames.some(g => (progressGames[g.id]?.completedDailyDates ?? []).includes(dateStr));
     return { label, day: d.getDate(), isToday, isFuture, isDone };
   });
 
@@ -177,7 +167,7 @@ export default function DailyScreen() {
         {/* Today's set */}
         <View style={s.sectionRow}>
           <Text style={s.sectionTitle}>Today's set</Text>
-          <Text style={s.sectionSub}>{doneCount} of {challenges.length} done</Text>
+          <Text style={s.sectionSub}>{doneCount} / {challenges.length} done</Text>
         </View>
 
         {/* Challenge cards */}
@@ -189,15 +179,21 @@ export default function DailyScreen() {
               <TouchableOpacity
                 key={ch.id}
                 style={[s.challengeCard, done && s.challengeDone]}
-                onPress={() => router.push(ch.route as any)}
-                activeOpacity={0.82}
+                onPress={() => !done && router.push(ch.route as any)}
+                activeOpacity={done ? 1 : 0.82}
+                disabled={done}
               >
                 {/* Glyph well */}
                 <View style={[s.challengeWell, { backgroundColor: tone.bg }]}>
-                  {ch.id === 'sudoku'
-                    ? <GridGlyph color={tone.ink} />
-                    : <Text style={[s.challengeGlyph, { color: tone.ink }]}>{ch.glyph}</Text>
-                  }
+                  {ch.id === 'sudoku' ? (
+                    <GridGlyph color={tone.ink} />
+                  ) : ch.id === 'crossword-mini' ? (
+                    <Ionicons name="pencil" size={24} color={tone.ink} />
+                  ) : ch.id === 'group-it' ? (
+                    <Ionicons name="grid" size={24} color={tone.ink} />
+                  ) : (
+                    <Text style={[s.challengeGlyph, { color: tone.ink }]}>Aa</Text>
+                  )}
                   {done && (
                     <View style={s.doneOverlay}>
                       <Ionicons name="checkmark" size={22} color="#fff" />

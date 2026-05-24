@@ -21,8 +21,9 @@ import { fonts } from '../../src/theme/typography';
 import { GAMES, getGamesByMVP } from '../../src/constants/games';
 import type { GameDefinition } from '../../src/constants/games';
 import { useProgressStore } from '../../src/store/useProgressStore';
+import { GameGlyph } from '../../src/components/GameGlyph';
 
-const ALL_GAMES = getGamesByMVP(7);
+const ALL_GAMES = getGamesByMVP(15);
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const TILE_WIDTH = (SCREEN_WIDTH - 22 * 2 - 12) / 2;
 
@@ -37,74 +38,18 @@ const PILLS: { key: Category; label: string }[] = [
   { key: 'classic', label: 'Classic' },
 ];
 
-// Text-based glyphs for each category (no SVG needed)
-function CategoryGlyph({ cat, color }: { cat: string; color: string }) {
-  const s: Record<string, { text: string; size: number }> = {
-    word:    { text: 'Aa', size: 24 },
-    number:  { text: '7',  size: 26 },
-    logic:   { text: '≡',  size: 26 },
-    visual:  { text: '◆',  size: 22 },
-    classic: { text: '♟',  size: 24 },
-  };
-  const g = s[cat] ?? { text: '?', size: 22 };
-  return (
-    <Text style={{ fontFamily: fonts.black, fontSize: g.size, color, lineHeight: g.size + 4 }}>
-      {g.text}
-    </Text>
-  );
-}
-
-// Grid glyph for logic/sudoku
-function GridGlyph({ color }: { color: string }) {
-  return (
-    <View style={{ width: 26, height: 26, flexDirection: 'row', flexWrap: 'wrap', gap: 2 }}>
-      {Array.from({ length: 9 }).map((_, i) => (
-        <View key={i} style={{
-          width: 7, height: 7, borderRadius: 1.5,
-          backgroundColor: color, opacity: i % 2 === 0 ? 1 : 0.55,
-        }} />
-      ))}
-    </View>
-  );
-}
-
-function getGameGlyph(game: GameDefinition, color: string) {
-  if (game.id === 'sudoku') return <GridGlyph color={color} />;
-  if (game.id === 'word-search') {
-    return <Ionicons name="search" size={24} color={color} />;
-  }
-  if (game.id === 'group-it') {
-    return <Ionicons name="grid" size={24} color={color} />;
-  }
-  if (game.id === 'hangman') {
-    return <Text style={{ fontFamily: fonts.black, fontSize: 22, color, lineHeight: 26 }}>_</Text>;
-  }
-  if (game.id === 'number-bonds') {
-    return <Text style={{ fontFamily: fonts.black, fontSize: 22, color, lineHeight: 26 }}>+</Text>;
-  }
-  if (game.id === 'crossword-mini') {
-    return <Ionicons name="pencil" size={22} color={color} />;
-  }
-  if (game.id === 'pattern-recog') {
-    return <Ionicons name="eye-outline" size={22} color={color} />;
-  }
-  if (game.id === 'sequence-fill') {
-    return <Text style={{ fontFamily: fonts.black, fontSize: 20, color, lineHeight: 24 }}>…</Text>;
-  }
-  if (game.id === 'math-sprint') {
-    return <Ionicons name="flash" size={22} color={color} />;
-  }
-  return <CategoryGlyph cat={game.category} color={color} />;
-}
 
 function AnimatedTile({
-  game, index, onPress, playsCount, streak,
+  game, index, onPress, playsCount, streak, isFavorited, onFavorite, bestTime,
 }: {
   game: GameDefinition;
   index: number;
   onPress: () => void;
   playsCount: number;
   streak: number;
+  isFavorited: boolean;
+  onFavorite: () => void;
+  bestTime: number | null;
 }) {
   const colors = useTheme();
   const opacity = useSharedValue(0);
@@ -127,19 +72,42 @@ function AnimatedTile({
   return (
     <Animated.View style={[animStyle, { width: TILE_WIDTH }]}>
       <TouchableOpacity style={s.tile} onPress={onPress} activeOpacity={0.82}>
-        <View style={[s.glyphWell, { backgroundColor: tone.bg }]}>
-          {getGameGlyph(game, tone.ink)}
+        <View style={s.tileTopRow}>
+          <View style={[s.glyphWell, { backgroundColor: tone.bg }]}>
+            <GameGlyph id={game.id} color={tone.ink} size={22} />
+          </View>
+          <TouchableOpacity
+            style={s.heartBtn}
+            onPress={onFavorite}
+            hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+          >
+            <Ionicons
+              name={isFavorited ? 'heart' : 'heart-outline'}
+              size={15}
+              color={isFavorited ? '#E26A2C' : colors.inkMuted}
+            />
+          </TouchableOpacity>
         </View>
         <View style={{ marginTop: 'auto' }}>
           <Text style={s.tileName} numberOfLines={1}>{game.name}</Text>
           <Text style={s.tileBlurb} numberOfLines={2}>{game.tagline}</Text>
         </View>
-        {streak > 0 && (
-          <View style={s.tileStreak}>
-            <Ionicons name="flame" size={12} color="#E26A2C" />
-            <Text style={s.tileStreakText}>{streak} day streak</Text>
-          </View>
-        )}
+        <View style={s.tileFooter}>
+          {streak > 0 && (
+            <View style={s.tileStreak}>
+              <Ionicons name="flame" size={12} color="#E26A2C" />
+              <Text style={s.tileStreakText}>{streak}d</Text>
+            </View>
+          )}
+          {bestTime !== null && (
+            <View style={s.tilePB}>
+              <Ionicons name="stopwatch-outline" size={11} color={tone.ink} />
+              <Text style={[s.tilePBText, { color: tone.ink }]}>
+                {Math.floor(bestTime / 60)}:{String(bestTime % 60).padStart(2, '0')}
+              </Text>
+            </View>
+          )}
+        </View>
       </TouchableOpacity>
     </Animated.View>
   );
@@ -148,13 +116,28 @@ function AnimatedTile({
 export default function HomeScreen() {
   const router = useRouter();
   const colors = useTheme();
-  const { games: progressGames, overallStreak } = useProgressStore();
+  const { games: progressGames, overallStreak, favoritedGames, toggleFavorite } = useProgressStore();
   const [activeCategory, setActiveCategory] = useState<Category>('all');
   const s = useMemo(() => makeStyles(colors), [colors]);
 
   const filteredGames = activeCategory === 'all'
     ? ALL_GAMES
     : ALL_GAMES.filter(g => g.category === activeCategory);
+
+  const mostPlayedGames = useMemo(() =>
+    ALL_GAMES
+      .filter(g => (progressGames[g.id]?.gamesPlayed ?? 0) > 0)
+      .sort((a, b) => (progressGames[b.id]?.gamesPlayed ?? 0) - (progressGames[a.id]?.gamesPlayed ?? 0))
+      .slice(0, 6),
+    [progressGames]
+  );
+
+  const favoriteGamesList = useMemo(() =>
+    favoritedGames
+      .map(id => ALL_GAMES.find(g => g.id === id))
+      .filter(Boolean) as typeof ALL_GAMES,
+    [favoritedGames]
+  );
 
   const now = new Date();
   const hour = now.getHours();
@@ -222,6 +205,61 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Favorites / Most Played quick-access row */}
+        {favoriteGamesList.length > 0 ? (
+          <>
+            <View style={s.sectionRow}>
+              <Text style={s.sectionTitle}>Favorites</Text>
+              <Ionicons name="heart" size={14} color="#E26A2C" style={{ marginBottom: 2 }} />
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.quickRow}>
+              {favoriteGamesList.map(game => {
+                const tone = colors[game.category];
+                return (
+                  <TouchableOpacity
+                    key={game.id}
+                    style={[s.quickChip, { backgroundColor: colors.surface }]}
+                    onPress={() => router.push(`/game/${game.id}`)}
+                    activeOpacity={0.82}
+                  >
+                    <View style={[s.quickChipIcon, { backgroundColor: tone.bg }]}>
+                      <GameGlyph id={game.id} color={tone.ink} size={18} />
+                    </View>
+                    <Text style={s.quickChipText} numberOfLines={1}>{game.name}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </>
+        ) : mostPlayedGames.length > 0 ? (
+          <>
+            <View style={s.sectionRow}>
+              <Text style={s.sectionTitle}>Most Played</Text>
+              <Text style={s.sectionCount}>{mostPlayedGames.length} games</Text>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.quickRow}>
+              {mostPlayedGames.map(game => {
+                const tone = colors[game.category];
+                const plays = progressGames[game.id]?.gamesPlayed ?? 0;
+                return (
+                  <TouchableOpacity
+                    key={game.id}
+                    style={[s.quickChip, { backgroundColor: colors.surface }]}
+                    onPress={() => router.push(`/game/${game.id}`)}
+                    activeOpacity={0.82}
+                  >
+                    <View style={[s.quickChipIcon, { backgroundColor: tone.bg }]}>
+                      <GameGlyph id={game.id} color={tone.ink} size={18} />
+                    </View>
+                    <Text style={s.quickChipText} numberOfLines={1}>{game.name}</Text>
+                    <Text style={s.quickChipSub}>{plays}×</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </>
+        ) : null}
+
         {/* Category pills */}
         <ScrollView
           horizontal
@@ -260,7 +298,7 @@ export default function HomeScreen() {
               activeOpacity={0.82}
             >
               <View style={[s.continueWell, { backgroundColor: colors.logic.bg }]}>
-                <GridGlyph color={colors.logic.ink} />
+                <GameGlyph id="sudoku" color={colors.logic.ink} size={22} />
               </View>
               <View style={s.continueInfo}>
                 <Text style={s.continueName}>Sudoku Classic</Text>
@@ -296,6 +334,9 @@ export default function HomeScreen() {
                 onPress={() => router.push(`/game/${game.id}`)}
                 playsCount={progress?.gamesPlayed ?? 0}
                 streak={progress?.currentStreak ?? 0}
+                isFavorited={favoritedGames.includes(game.id)}
+                onFavorite={() => toggleFavorite(game.id)}
+                bestTime={progress?.bestTimeSeconds ?? null}
               />
             );
           })}
@@ -324,10 +365,21 @@ const makeTileStyles = (colors: ThemeColors) => StyleSheet.create({
     shadowRadius: 12,
     elevation: 3,
   },
+  tileTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+  },
   glyphWell: {
     width: 56,
     height: 56,
     borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heartBtn: {
+    width: 28,
+    height: 28,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -344,15 +396,30 @@ const makeTileStyles = (colors: ThemeColors) => StyleSheet.create({
     marginTop: 3,
     lineHeight: 17,
   },
+  tileFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
   tileStreak: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 3,
   },
   tileStreakText: {
     fontFamily: fonts.bold,
-    fontSize: 12,
+    fontSize: 11,
     color: colors.inkSoft,
+  },
+  tilePB: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  tilePBText: {
+    fontFamily: fonts.bold,
+    fontSize: 11,
   },
 });
 
@@ -601,12 +668,49 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     height: '100%',
     borderRadius: 99,
   },
+  quickRow: {
+    paddingHorizontal: 22,
+    paddingBottom: 4,
+    gap: 10,
+    flexDirection: 'row',
+  },
+  quickChip: {
+    borderRadius: 18,
+    padding: 12,
+    alignItems: 'center',
+    gap: 6,
+    width: 90,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  quickChipIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickChipText: {
+    fontFamily: fonts.bold,
+    fontSize: 11,
+    color: colors.ink,
+    textAlign: 'center',
+    lineHeight: 14,
+  },
+  quickChipSub: {
+    fontFamily: fonts.semiBold,
+    fontSize: 10,
+    color: colors.inkMuted,
+  },
   sectionRow: {
     paddingHorizontal: 22,
     paddingTop: 24,
     paddingBottom: 14,
     flexDirection: 'row',
-    alignItems: 'baseline',
+    alignItems: 'center',
     justifyContent: 'space-between',
   },
   sectionTitle: {

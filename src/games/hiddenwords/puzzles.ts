@@ -1,0 +1,48 @@
+export interface HiddenWordPuzzle {
+  longWord: string;
+  hiddenWord: string;
+  wrongChoices: string[];
+}
+
+export const HIDDEN_WORD_PUZZLES: HiddenWordPuzzle[] = [
+  { longWord: 'PLANET', hiddenWord: 'PLAN', wrongChoices: ['LANE', 'LENT', 'PANT'] },
+  { longWord: 'CARPET', hiddenWord: 'CARE', wrongChoices: ['CART', 'PART', 'CAPE'] },
+  { longWord: 'FLOWER', hiddenWord: 'FLOW', wrongChoices: ['FLEW', 'OWLS', 'FOWL'] },
+  { longWord: 'BRIDGE', hiddenWord: 'RIDE', wrongChoices: ['GRID', 'BIRD', 'DIRE'] },
+  { longWord: 'GLISTEN', hiddenWord: 'LIST', wrongChoices: ['ISLE', 'GILT', 'LIEN'] },
+  { longWord: 'MOTHER', hiddenWord: 'OTHER', wrongChoices: ['MORE', 'HOME', 'THEM'] },
+  { longWord: 'STRONG', hiddenWord: 'TONG', wrongChoices: ['SONG', 'TORN', 'GONG'] },
+  { longWord: 'LAUGHTER', hiddenWord: 'LAUGH', wrongChoices: ['LATHE', 'GHAUT', 'LATER'] },
+  { longWord: 'BASKET', hiddenWord: 'BASK', wrongChoices: ['SAKE', 'ABET', 'TASK'] },
+  { longWord: 'CANTEEN', hiddenWord: 'ANTE', wrongChoices: ['CANE', 'TEEN', 'CENT'] },
+  { longWord: 'DRAGON', hiddenWord: 'RAG', wrongChoices: ['ROD', 'NAG', 'GOD'] },
+  { longWord: 'FEATHER', hiddenWord: 'HEAT', wrongChoices: ['FEAR', 'EARL', 'RATE'] },
+  { longWord: 'GLIMPSE', hiddenWord: 'LIMP', wrongChoices: ['GEMS', 'SLIM', 'GLIB'] },
+  { longWord: 'HUNTER', hiddenWord: 'HUNT', wrongChoices: ['HURT', 'TUNE', 'RUNE'] },
+  { longWord: 'INSECT', hiddenWord: 'SECT', wrongChoices: ['NICE', 'TINS', 'ICES'] },
+  { longWord: 'JUNGLE', hiddenWord: 'JUNK', wrongChoices: ['LUNGE', 'GLEN', 'GLUE'] },
+  { longWord: 'KITTEN', hiddenWord: 'KIT', wrongChoices: ['TEN', 'TIE', 'KIN'] },
+  { longWord: 'LANTERN', hiddenWord: 'TERN', wrongChoices: ['RENT', 'LENT', 'RANT'] },
+  { longWord: 'MANGO', hiddenWord: 'MAN', wrongChoices: ['NAG', 'GON', 'MON'] },
+  { longWord: 'NAPKIN', hiddenWord: 'NAP', wrongChoices: ['KIN', 'PAN', 'INK'] },
+  { longWord: 'ORANGE', hiddenWord: 'RANG', wrongChoices: ['ORAN', 'NORA', 'AGER'] },
+  { longWord: 'PEPPER', hiddenWord: 'PEP', wrongChoices: ['REP', 'PER', 'PRE'] },
+  { longWord: 'QUEEN', hiddenWord: 'QUE', wrongChoices: ['UNE', 'NEE', 'ENE'] },
+  { longWord: 'RABBIT', hiddenWord: 'RABBI', wrongChoices: ['RABID', 'HABIT', 'ORBIT'] },
+  { longWord: 'SALMON', hiddenWord: 'SAL', wrongChoices: ['MON', 'NAL', 'LAS'] },
+  { longWord: 'TEMPLE', hiddenWord: 'TEMP', wrongChoices: ['MELT', 'PEEL', 'LEPT'] },
+  { longWord: 'UNIQUE', hiddenWord: 'UNIT', wrongChoices: ['QUINE', 'INDIE', 'QUITE'] },
+  { longWord: 'VELVET', hiddenWord: 'ELVE', wrongChoices: ['VELT', 'EVET', 'LEET'] },
+  { longWord: 'WALNUT', hiddenWord: 'WALL', wrongChoices: ['WANT', 'WELT', 'WAIL'] },
+  { longWord: 'YELLOW', hiddenWord: 'YELL', wrongChoices: ['WELL', 'OWEL', 'LOWE'] },
+  { longWord: 'ZIPPER', hiddenWord: 'ZIP', wrongChoices: ['PIE', 'RIP', 'REP'] },
+  { longWord: 'ANCHOR', hiddenWord: 'ANCHO', wrongChoices: ['RANCH', 'CORN', 'HORA'] },
+  { longWord: 'BALLET', hiddenWord: 'BALL', wrongChoices: ['BELT', 'BELL', 'BALE'] },
+  { longWord: 'CAMERA', hiddenWord: 'CAME', wrongChoices: ['ACRE', 'RACE', 'MARC'] },
+  { longWord: 'DANCER', hiddenWord: 'DANCE', wrongChoices: ['CANER', 'CRANE', 'CEDAR'] },
+  { longWord: 'ENGINE', hiddenWord: 'NINE', wrongChoices: ['GENIE', 'INANE', 'REIGN'] },
+  { longWord: 'FABRIC', hiddenWord: 'FAB', wrongChoices: ['BRF', 'RCA', 'CRI'] },
+  { longWord: 'GOBLIN', hiddenWord: 'GOB', wrongChoices: ['LIN', 'BOG', 'OBL'] },
+  { longWord: 'HARBOR', hiddenWord: 'HARM', wrongChoices: ['HORA', 'ROHB', 'ARBO'] },
+  { longWord: 'IMPACT', hiddenWord: 'PAC', wrongChoices: ['AMP', 'ACT', 'TIP'] },
+];

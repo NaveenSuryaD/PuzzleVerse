@@ -73,9 +73,10 @@ function buildFoundCellMap(words: PlacedWord[]): Map<string, number> {
 
 interface WordSearchGameProps {
   onComplete?: (won: boolean, timeSeconds: number) => void;
+  onBack?: () => void;
 }
 
-export const WordSearchGame: React.FC<WordSearchGameProps> = ({ onComplete }) => {
+export const WordSearchGame: React.FC<WordSearchGameProps> = ({ onComplete, onBack }) => {
   const colors = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
   const palettes = useMemo(() => FOUND_PALETTES(colors), [colors]);
@@ -321,6 +322,15 @@ export const WordSearchGame: React.FC<WordSearchGameProps> = ({ onComplete }) =>
               <Ionicons name="refresh" size={16} color={colors.bg} />
               <Text style={[s.playAgainText, { color: colors.bg }]}>Play Again</Text>
             </TouchableOpacity>
+            {onBack && (
+              <TouchableOpacity
+                style={[s.playAgainBtn, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: colors.rule, marginTop: 10 }]}
+                onPress={onBack}
+                activeOpacity={0.82}
+              >
+                <Text style={[s.playAgainText, { color: colors.inkSoft }]}>Go Back</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </Modal>
