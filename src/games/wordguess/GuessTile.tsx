@@ -164,6 +164,7 @@ const styles = StyleSheet.create({
     width: TILE_SIZE,
     height: TILE_SIZE,
     justifyContent: 'center',
+    alignItems: 'center',
     borderWidth: 2,
     borderRadius: 6,
     margin: 3,
@@ -172,8 +173,9 @@ const styles = StyleSheet.create({
   letter: {
     fontSize: 22,
     fontFamily: fonts.black,
-    width: TILE_SIZE,
     textAlign: 'center',
     lineHeight: 30,
+    includeFontPadding: false,
+    color: '#000000',
   },
 });

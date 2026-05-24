@@ -5,10 +5,12 @@ import { fonts } from '../../theme/typography';
 import { FLAGS } from './puzzles';
 import type { FlagDesign } from './puzzles';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 function shuffle<T>(arr: T[]): T[] {
@@ -38,18 +40,22 @@ function FlagView({ flag }: { flag: FlagDesign }) {
   );
 }
 
-export function FlagQuizGame({ onComplete, onBack }: Props) {
+export function FlagQuizGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [flags] = useState(() => shuffle([...FLAGS]).slice(0, 10));
-  const [round, setRound] = useState(0);
-  const [score, setScore] = useState(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [flags] = useState<FlagDesign[]>(() => saved?.flags ?? shuffle([...FLAGS]).slice(0, 10));
+  const [round, setRound] = useState<number>(() => saved?.round ?? 0);
+  const [score, setScore] = useState<number>(() => saved?.score ?? 0);
   const [selected, setSelected] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
+
+  useSaveGame('flag-quiz', () => ({ flags, round, score }), !done, [round, score], elapsedRef);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 

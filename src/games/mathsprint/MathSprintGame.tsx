@@ -8,6 +8,7 @@ import { generateQuestions } from './generator';
 import type { Question } from './types';
 import * as Haptics from 'expo-haptics';
 import { playSound } from '../../audio/sounds';
+import { useSaveGame } from '../../utils/gameSave';
 
 type Difficulty = 'easy' | 'medium' | 'hard';
 
@@ -18,18 +19,21 @@ const PENALTY = 10;
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
-export function MathSprintGame({ onComplete, onBack }: Props) {
+export function MathSprintGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
   const [difficulty, setDifficulty] = useState<Difficulty>('medium');
-  const [questions, setQuestions] = useState(() => generateQuestions('medium'));
-  const [idx, setIdx] = useState(0);
+  const [questions, setQuestions] = useState<Question[]>(() => saved?.questions ?? generateQuestions('medium'));
+  const [idx, setIdx] = useState<number>(() => saved?.idx ?? 0);
   const [input, setInput] = useState('');
-  const [correct, setCorrect] = useState(0);
-  const [wrong, setWrong] = useState(0);
+  const [correct, setCorrect] = useState<number>(() => saved?.correct ?? 0);
+  const [wrong, setWrong] = useState<number>(() => saved?.wrong ?? 0);
   const [flash, setFlash] = useState<'correct' | 'wrong' | null>(null);
   const [done, setDone] = useState(false);
 
@@ -37,19 +41,22 @@ export function MathSprintGame({ onComplete, onBack }: Props) {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
+  useSaveGame('math-sprint', () => ({ questions, idx, correct, wrong }), !done, [idx, correct, wrong], elapsedRef);
+
   useEffect(() => {
     timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, []);
 
-  const finish = useCallback(() => {
+  const finish = useCallback((finalCorrect: number) => {
     if (completedRef.current) return;
     completedRef.current = true;
     if (timerRef.current) clearInterval(timerRef.current);
+    const won = finalCorrect / questions.length >= 0.7;
     setDone(true);
-    playSound('win');
-    onComplete(true, elapsedRef.current);
-  }, [onComplete]);
+    playSound(won ? 'win' : 'lose');
+    onComplete(won, elapsedRef.current);
+  }, [onComplete, questions.length]);
 
   const submit = useCallback(() => {
     if (!input) return;
@@ -69,12 +76,13 @@ export function MathSprintGame({ onComplete, onBack }: Props) {
     }
     setTimeout(() => setFlash(null), 350);
     setInput('');
+    const newCorrect = userAns === q.answer ? correct + 1 : correct;
     if (idx + 1 >= questions.length) {
-      setTimeout(finish, 400);
+      setTimeout(() => finish(newCorrect), 400);
     } else {
       setIdx(i => i + 1);
     }
-  }, [input, idx, questions, finish]);
+  }, [input, idx, questions, correct, finish]);
 
   const pressKey = useCallback((key: string) => {
     if (key === '⌫') {

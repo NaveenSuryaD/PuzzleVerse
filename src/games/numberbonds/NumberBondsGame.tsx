@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, Dimensions } from 'react-native';
+import { useSaveGame } from '../../utils/gameSave';
 import { useTheme, type ThemeColors } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { generatePuzzle } from './generator';
@@ -12,20 +13,25 @@ const TILE_SIZE = Math.floor((SCREEN_W - 32 - 3 * 8) / 4);
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
-export function NumberBondsGame({ onComplete, onBack }: Props) {
+export function NumberBondsGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
 
-  const [puzzle, setPuzzle] = useState(() => generatePuzzle());
-  const [tiles, setTiles] = useState<Tile[]>(puzzle.tiles);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [puzzle, setPuzzle] = useState<ReturnType<typeof generatePuzzle>>(() => saved?.puzzle ?? generatePuzzle());
+  const [tiles, setTiles] = useState<Tile[]>(() => saved?.tiles ?? puzzle.tiles);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [gameWon, setGameWon] = useState(false);
 
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
+
+  useSaveGame('number-bonds', () => ({ puzzle, tiles }), !gameWon, [tiles], elapsedRef);
 
   const startTimer = useCallback(() => {
     if (timerRef.current) clearInterval(timerRef.current);

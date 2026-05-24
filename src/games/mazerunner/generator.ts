@@ -5,8 +5,13 @@ export interface MazeData {
   size: number;
 }
 
-export function generateMaze(): MazeData {
-  const size = MAZE_SIZE;
+export function getMazeSize(level: number): number {
+  // Level 1: 11, Level 2: 13, Level 3: 15, Level 4+: 17
+  return Math.min(11 + (level - 1) * 2, 17);
+}
+
+export function generateMaze(level = 1): MazeData {
+  const size = getMazeSize(level);
   const cells: boolean[][] = Array.from({ length: size }, () => Array(size).fill(true));
 
   function carve(r: number, c: number) {

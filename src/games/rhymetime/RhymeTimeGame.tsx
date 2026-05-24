@@ -4,10 +4,12 @@ import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { RHYME_ROUNDS } from './puzzles';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 function shuffle<T>(arr: T[]): T[] {
@@ -19,19 +21,23 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-export function RhymeTimeGame({ onComplete, onBack }: Props) {
+export function RhymeTimeGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [rounds] = useState(() => shuffle([...RHYME_ROUNDS]).slice(0, 5));
-  const [round, setRound] = useState(0);
-  const [score, setScore] = useState(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [rounds] = useState<typeof RHYME_ROUNDS>(() => saved?.rounds ?? shuffle([...RHYME_ROUNDS]).slice(0, 5));
+  const [round, setRound] = useState<number>(() => saved?.round ?? 0);
+  const [score, setScore] = useState<number>(() => saved?.score ?? 0);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [submitted, setSubmitted] = useState(false);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
+
+  useSaveGame('rhyme-time', () => ({ rounds, round, score }), !done, [round, score], elapsedRef);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 

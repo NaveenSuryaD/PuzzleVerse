@@ -3,10 +3,12 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 // Tapa: shade cells to form one connected group
@@ -42,7 +44,7 @@ const PUZZLES = [
 
 const CELL_SIZE = 58;
 
-export function TapaGame({ onComplete, onBack }: Props) {
+export function TapaGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -51,9 +53,13 @@ export function TapaGame({ onComplete, onBack }: Props) {
   const puz = PUZZLES[0];
   const SIZE = puz.size;
 
-  const [shaded, setShaded] = useState<Set<string>>(new Set());
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [shaded, setShaded] = useState<Set<string>>(() => new Set(saved?.shaded ?? []));
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
+
+  useSaveGame('tapa', () => ({ shaded: [...shaded] }), !done, [shaded], elapsedRef);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 

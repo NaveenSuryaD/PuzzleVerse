@@ -4,10 +4,12 @@ import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { HIDDEN_WORD_PUZZLES } from './puzzles';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 function shuffle<T>(arr: T[]): T[] {
@@ -19,19 +21,22 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-export function HiddenWordsGame({ onComplete, onBack }: Props) {
+export function HiddenWordsGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [puzzles] = useState(() => shuffle([...HIDDEN_WORD_PUZZLES]).slice(0, 10));
-  const [round, setRound] = useState(0);
-  const [score, setScore] = useState(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [puzzles] = useState<typeof HIDDEN_WORD_PUZZLES>(() => saved?.puzzles ?? shuffle([...HIDDEN_WORD_PUZZLES]).slice(0, 10));
+  const [round, setRound] = useState<number>(() => saved?.round ?? 0);
+  const [score, setScore] = useState<number>(() => saved?.score ?? 0);
   const [selected, setSelected] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
 
+  useSaveGame('hidden-words', () => ({ puzzles, round, score }), !done, [round], elapsedRef);
   const s = useMemo(() => makeStyles(colors), [colors]);
 
   useEffect(() => {

@@ -4,15 +4,17 @@ import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { HITORI_PUZZLES } from './puzzles';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 const CELL = 60;
 
-export function HitoriGame({ onComplete, onBack }: Props) {
+export function HitoriGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -21,11 +23,15 @@ export function HitoriGame({ onComplete, onBack }: Props) {
   const puzzle = HITORI_PUZZLES[0];
   const N = puzzle.grid.length;
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
   const [shaded, setShaded] = useState<boolean[][]>(() =>
-    Array.from({ length: N }, () => Array(N).fill(false))
+    saved?.shaded ?? Array.from({ length: N }, () => Array(N).fill(false))
   );
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
+
+  useSaveGame('hitori', () => ({ shaded }), !done, [shaded], elapsedRef);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 

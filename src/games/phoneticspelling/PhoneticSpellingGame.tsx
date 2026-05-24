@@ -3,11 +3,44 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
+
+// Alternative words for each letter — used as plausible wrong options
+// All words start with the same letter as the question letter
+const LETTER_ALTS: Record<string, string[]> = {
+  A: ['ANCHOR', 'AMBER', 'ARROW', 'ATLAS'],
+  B: ['BANNER', 'BRIDGE', 'BADGE', 'BARON'],
+  C: ['COPPER', 'CASTLE', 'COBRA', 'CEDAR'],
+  D: ['DAGGER', 'DOME', 'DRAKE', 'DUSK'],
+  E: ['EAGLE', 'EMBER', 'ELDER', 'ENVOY'],
+  F: ['FALCON', 'FERRY', 'FLAME', 'FROST'],
+  G: ['GAMMA', 'GECKO', 'GHOST', 'GRAVEL'],
+  H: ['HARBOR', 'HAWK', 'HAZE', 'HERALD'],
+  I: ['ICEBERG', 'IRON', 'IVORY', 'IGLOO'],
+  J: ['JUNGLE', 'JADE', 'JASPER', 'JESTER'],
+  K: ['KELP', 'KNIGHT', 'KNOT', 'KYOTO'],
+  L: ['LEMON', 'LUNAR', 'LOGIC', 'LANCE'],
+  M: ['MAPLE', 'MARBLE', 'MANGO', 'METRO'],
+  N: ['NEON', 'NOBLE', 'NOMAD', 'NORTH'],
+  O: ['ONYX', 'ORBIT', 'OPAL', 'OTTER'],
+  P: ['PILOT', 'PRISM', 'PANDA', 'PIXEL'],
+  Q: ['QUARTZ', 'QUEEN', 'QUOTA', 'QUEST'],
+  R: ['RADAR', 'RAPID', 'RAVEN', 'RIDGE'],
+  S: ['SOLAR', 'STORM', 'SAPPHIRE', 'SCOUT'],
+  T: ['TIGER', 'TORCH', 'TERRA', 'TURBO'],
+  U: ['ULTRA', 'UMBRA', 'URBAN', 'UNITY'],
+  V: ['VIPER', 'VAULT', 'VALOR', 'VISTA'],
+  W: ['WALRUS', 'WINTER', 'WARDEN', 'WAVE'],
+  X: ['XENON', 'XERIC', 'XMAS', 'XYLEM'],
+  Y: ['YELLOW', 'YONDER', 'YACHT', 'YIELD'],
+  Z: ['ZEBRA', 'ZENITH', 'ZEPHYR', 'ZINC'],
+};
 
 // Phonetic Spelling: match NATO phonetic alphabet words to letters
 const NATO = [
@@ -50,28 +83,37 @@ function shuffle<T>(arr: T[]): T[] {
 
 type Mode = 'letterToWord' | 'wordToLetter';
 
-export function PhoneticSpellingGame({ onComplete, onBack }: Props) {
+export function PhoneticSpellingGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [questions] = useState(() => shuffle([...NATO]).slice(0, 10));
-  const [round, setRound] = useState(0);
-  const [score, setScore] = useState(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [questions] = useState<typeof NATO>(() => saved?.questions ?? shuffle([...NATO]).slice(0, 10));
+  const [round, setRound] = useState<number>(() => saved?.round ?? 0);
+  const [score, setScore] = useState<number>(() => saved?.score ?? 0);
   const [chosen, setChosen] = useState<string | null>(null);
   const [mode] = useState<Mode>('letterToWord');
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
+
+  useSaveGame('phonetic-spelling', () => ({ questions, round, score }), !done, [round, score], elapsedRef);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
   const current = questions[round];
 
   const choices = useMemo(() => {
     if (!current) return [];
-    const others = NATO.filter(n => n.letter !== current.letter);
-    const wrong = shuffle(others).slice(0, 3);
-    return shuffle([current, ...wrong]);
+    // Wrong options must start with the same letter as the correct answer
+    const alts = LETTER_ALTS[current.letter] ?? [];
+    const wrong = shuffle(alts).slice(0, 3);
+    // Pad with other-letter NATO words if not enough alts (shouldn't happen)
+    const padded = wrong.length < 3
+      ? [...wrong, ...shuffle(NATO.filter(n => n.letter !== current.letter)).map(n => n.word)].slice(0, 3)
+      : wrong;
+    return shuffle([current.word, ...padded]);
   }, [current]);
 
   useEffect(() => {
@@ -115,24 +157,24 @@ export function PhoneticSpellingGame({ onComplete, onBack }: Props) {
       </View>
 
       <View style={s.choices}>
-        {choices.map(ch => {
+        {choices.map(word => {
           let bg = colors.surface;
           let border = colors.divider;
-          if (chosen === ch.word) {
-            bg = ch.word === current.word ? colors.number.bg : '#FFE0E0';
-            border = ch.word === current.word ? colors.number.ink : colors.danger;
-          } else if (chosen !== null && ch.word === current.word) {
+          if (chosen === word) {
+            bg = word === current.word ? colors.number.bg : '#FFE0E0';
+            border = word === current.word ? colors.number.ink : colors.danger;
+          } else if (chosen !== null && word === current.word) {
             bg = colors.number.bg;
             border = colors.number.ink;
           }
           return (
             <TouchableOpacity
-              key={ch.word}
+              key={word}
               style={[s.choice, { backgroundColor: bg, borderColor: border }]}
-              onPress={() => handleChoice(ch.word)}
+              onPress={() => handleChoice(word)}
               activeOpacity={0.8}
             >
-              <Text style={s.choiceText}>{ch.word}</Text>
+              <Text style={s.choiceText}>{word}</Text>
             </TouchableOpacity>
           );
         })}

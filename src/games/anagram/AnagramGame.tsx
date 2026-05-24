@@ -5,25 +5,31 @@ import { fonts } from '../../theme/typography';
 import { generateAnagram } from './generator';
 import type { AnagramPuzzle } from './types';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
-export function AnagramGame({ onComplete, onBack }: Props) {
+export function AnagramGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [puzzle, setPuzzle] = useState<AnagramPuzzle>(() => generateAnagram());
-  const [placed, setPlaced] = useState<(string | null)[]>(() => Array(generateAnagram().word.length).fill(null));
-  const [usedIndices, setUsedIndices] = useState<Set<number>>(new Set());
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [puzzle, setPuzzle] = useState<AnagramPuzzle>(() => saved?.puzzle ?? generateAnagram());
+  const [placed, setPlaced] = useState<(string | null)[]>(() => saved?.placed ?? Array(puzzle.word.length).fill(null));
+  const [usedIndices, setUsedIndices] = useState<Set<number>>(new Set(saved?.usedIndices ?? []));
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
-  const [round, setRound] = useState(1);
-  const [score, setScore] = useState(0);
+  const [round, setRound] = useState<number>(() => saved?.round ?? 1);
+  const [score, setScore] = useState<number>(() => saved?.score ?? 0);
+
+  useSaveGame('anagram', () => ({ puzzle, placed, usedIndices: Array.from(usedIndices), round, score }), !done, [placed, round, score], elapsedRef);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 

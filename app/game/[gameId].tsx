@@ -1,7 +1,7 @@
-import React, { useEffect, useCallback, useRef, useState } from 'react';
+import React, { useEffect, useCallback, useRef, useState, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { playSound } from '../../src/audio/sounds';
@@ -11,6 +11,8 @@ import { fonts } from '../../src/theme/typography';
 import { GAMES } from '../../src/constants/games';
 import { getHints } from '../../src/constants/gameHints';
 import { Confetti } from '../../src/components/Confetti';
+import { ResumeGameModal } from '../../src/components/ResumeGameModal';
+import { useGameTimer } from '../../src/hooks/useGameTimer';
 import { SudokuGame } from '../../src/games/sudoku/SudokuGame';
 import { WordGuessGame } from '../../src/games/wordguess/WordGuessGame';
 import { WordSearchGame } from '../../src/games/wordsearch/WordSearchGame';
@@ -99,6 +101,7 @@ import { GravityBlocksGame } from '../../src/games/gravityblocks/GravityBlocksGa
 import { DailyChallengeGame } from '../../src/games/dailychallenge/DailyChallengeGame';
 import { useProgressStore } from '../../src/store/useProgressStore';
 import { useGameStore } from '../../src/store/useGameStore';
+import { loadGameRaw, clearGame } from '../../src/utils/gameSave';
 import type { GameMode } from '../../src/games/wordguess/types';
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -118,14 +121,14 @@ const formatTime = (secs: number): string => {
 export default function GameScreen() {
   const { gameId, mode, date, difficulty, daily: dailyParam } = useLocalSearchParams<{ gameId: string; mode?: string; date?: string; difficulty?: string; daily?: string }>();
   const router = useRouter();
+  const navigation = useNavigation();
   const colors = useTheme();
   const { recordGame, recordDailyComplete, games: progressGames } = useProgressStore();
   const { startGame, endGame } = useGameStore();
 
   const showTimer = useSettingsStore(s => s.showTimer);
   const hapticsEnabled = useSettingsStore(s => s.hapticsEnabled);
-  const [elapsed, setElapsed] = useState(0);
-  const [running, setRunning] = useState(true);
+  const { elapsedSeconds: elapsed, start: timerStart, pause: timerPause, resume: timerResume, reset: timerReset, restore: timerRestore } = useGameTimer(0);
   const [showHowToPlay, setShowHowToPlay] = useState(false);
   const [showHintModal, setShowHintModal] = useState(false);
   const [hintsRemaining, setHintsRemaining] = useState(3);
@@ -137,30 +140,54 @@ export default function GameScreen() {
   const [starCount, setStarCount] = useState(0);
   const [showStars, setShowStars] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // undefined = still loading from AsyncStorage; null = no save; string = saved JSON
+  const [savedStateJSON, setSavedStateJSON] = useState<string | null | undefined>(undefined);
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [savedElapsed, setSavedElapsed] = useState(0);
+  const [gameKey, setGameKey] = useState(0);
 
   const game = GAMES.find(g => g.id === gameId);
 
   useEffect(() => {
-    if (gameId) startGame(gameId);
-    // Show tutorial on first play
-    if (gameId && (progressGames[gameId]?.gamesPlayed ?? 0) === 0) {
-      setShowTutorial(true);
-    }
+    if (!gameId) return;
+    startGame(gameId);
+    const isFirstPlay = (progressGames[gameId]?.gamesPlayed ?? 0) === 0;
+    loadGameRaw(gameId).then(raw => {
+      if (raw) {
+        setSavedStateJSON(raw);
+        // Extract saved elapsed time if present
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed._elapsed) setSavedElapsed(parsed._elapsed);
+        } catch { /* ignore */ }
+        timerPause(); // keep timer frozen while resume modal shows
+        setShowResumeModal(true);
+      } else {
+        setSavedStateJSON(null);
+        if (isFirstPlay) {
+          timerPause();
+          setShowTutorial(true);
+        } else {
+          timerStart();
+        }
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameId]);
 
+  // Close modals when navigating away so they don't bleed into other screens
   useEffect(() => {
-    if (running) {
-      intervalRef.current = setInterval(() => setElapsed(e => e + 1), 1000);
-    } else {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    }
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [running]);
+    const unsub = navigation.addListener('blur', () => {
+      setShowResumeModal(false);
+      setShowTutorial(false);
+    });
+    return unsub;
+  }, [navigation]);
 
   const handleComplete = useCallback((won: boolean, timeSeconds: number, guessCount?: number) => {
     if (!gameId) return;
-    setRunning(false);
+    timerPause();
+    clearGame(gameId);
     recordGame(gameId, won, timeSeconds, sessionHintsUsed, guessCount);
     endGame(won);
     if (gameId === 'sudoku') setSudokuDone(true);
@@ -196,7 +223,8 @@ export default function GameScreen() {
 
   const handleDailyComplete = useCallback((won: boolean, timeSeconds: number, dailyDate: string) => {
     if (!gameId) return;
-    setRunning(false);
+    timerPause();
+    clearGame(gameId);
     recordGame(gameId, won, timeSeconds);
     endGame(won);
     recordDailyComplete(gameId, dailyDate, won);
@@ -338,12 +366,19 @@ export default function GameScreen() {
   const tutorial = TUTORIALS[game.id] ?? game.description ?? 'Tap to start playing!';
 
   const renderGame = () => {
+    // Wait until AsyncStorage check completes before rendering the game.
+    // This ensures useState() initialisers in game components receive the correct savedStateJSON.
+    if (savedStateJSON === undefined) return null;
+
+    const ss = savedStateJSON ?? undefined;
+
     if (game.id === 'sudoku') {
       return (
         <SudokuGame
           difficulty={sudokuDifficulty}
           daily={isDailyGame}
           onComplete={(_, t) => isDailyGame ? handleDailyComplete(true, t, dailyDate) : handleComplete(true, t)}
+          savedStateJSON={ss}
         />
       );
     }
@@ -355,6 +390,7 @@ export default function GameScreen() {
             dateOverride={date}
             onComplete={(won, attempts) => handleDailyComplete(won, attempts * 60, dailyDate)}
             onBack={() => router.back()}
+            savedStateJSON={ss}
           />
         );
       }
@@ -363,13 +399,14 @@ export default function GameScreen() {
           mode={gameMode}
           onComplete={(won, attempts) => handleComplete(won, attempts * 60, attempts)}
           onBack={() => router.back()}
+          savedStateJSON={ss}
         />
       );
     }
     if (game.id === 'word-search') {
       return (
         <WordSearchGame
-          onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()}
+          onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss}
         />
       );
     }
@@ -377,7 +414,7 @@ export default function GameScreen() {
       return (
         <GroupItGame
           onComplete={(won, t) => handleComplete(won, t)}
-          onBack={() => router.back()}
+          onBack={() => router.back()} savedStateJSON={ss}
         />
       );
     }
@@ -385,7 +422,7 @@ export default function GameScreen() {
       return (
         <HangmanGame
           onComplete={(won, t) => handleComplete(won, t)}
-          onBack={() => router.back()}
+          onBack={() => router.back()} savedStateJSON={ss}
         />
       );
     }
@@ -393,98 +430,98 @@ export default function GameScreen() {
       return (
         <NumberBondsGame
           onComplete={(won, t) => handleComplete(won, t)}
-          onBack={() => router.back()}
+          onBack={() => router.back()} savedStateJSON={ss}
         />
       );
     }
     if (game.id === 'crossword-mini') {
-      return <CrosswordGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
+      return <CrosswordGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
     }
     if (game.id === 'pattern-recog') {
-      return <PatternRecogGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
+      return <PatternRecogGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
     }
     if (game.id === 'sequence-fill') {
-      return <SequenceFillGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
+      return <SequenceFillGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
     }
     if (game.id === 'math-sprint') {
-      return <MathSprintGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
+      return <MathSprintGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
     }
     // MVP 8
-    if (game.id === 'anagram') return <AnagramGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'compound-words') return <CompoundWordsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'game-2048') return <Game2048Game onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'kakuro') return <KakuroGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'color-sort') return <ColorSortGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'pipe-connect') return <PipeConnectGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'tower-of-hanoi') return <TowerOfHanoiGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'sliding-puzzle') return <SlidingPuzzleGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
+    if (game.id === 'anagram') return <AnagramGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'compound-words') return <CompoundWordsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'game-2048') return <Game2048Game onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'kakuro') return <KakuroGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'color-sort') return <ColorSortGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'pipe-connect') return <PipeConnectGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'tower-of-hanoi') return <TowerOfHanoiGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'sliding-puzzle') return <SlidingPuzzleGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
     // MVP 9
-    if (game.id === 'hidden-words') return <HiddenWordsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'word-chain') return <WordChainGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'word-ladder') return <WordLadderGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'minesweeper') return <MinesweeperGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'magic-square') return <MagicSquareGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'balance-scales') return <BalanceScalesGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'flood-fill') return <FloodFillGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'maze-runner') return <MazeRunnerGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'pixel-art') return <PixelArtGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'flag-quiz') return <FlagQuizGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'noughts-crosses') return <NoughtsCrossesGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
+    if (game.id === 'hidden-words') return <HiddenWordsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'word-chain') return <WordChainGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'word-ladder') return <WordLadderGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'minesweeper') return <MinesweeperGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'magic-square') return <MagicSquareGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'balance-scales') return <BalanceScalesGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'flood-fill') return <FloodFillGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'maze-runner') return <MazeRunnerGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'pixel-art') return <PixelArtGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'flag-quiz') return <FlagQuizGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'noughts-crosses') return <NoughtsCrossesGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
     // MVP 10
-    if (game.id === 'boggle') return <BoggleGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'rhyme-time') return <RhymeTimeGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'backwards-words') return <BackwardsWordsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'cryptogram') return <CryptogramGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'kenken') return <KenKenGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'math-crossword') return <MathCrosswordGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'nonogram') return <NonogramGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'hitori') return <HitoriGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'chess-puzzles') return <ChessPuzzlesGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'science-symbols') return <ScienceSymbolsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
+    if (game.id === 'boggle') return <BoggleGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'rhyme-time') return <RhymeTimeGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'backwards-words') return <BackwardsWordsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'cryptogram') return <CryptogramGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'kenken') return <KenKenGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'math-crossword') return <MathCrosswordGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'nonogram') return <NonogramGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'hitori') return <HitoriGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'chess-puzzles') return <ChessPuzzlesGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'science-symbols') return <ScienceSymbolsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
     // MVP 11
-    if (game.id === 'word-hive') return <WordHiveGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'missing-vowels') return <MissingVowelsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'quote-guess') return <QuoteGuessGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'letter-soup') return <LetterSoupGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'memory-match') return <MemoryMatchGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'symbol-sequence') return <SymbolSequenceGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'peg-solitaire') return <PegSolitaireGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'skyscrapers') return <SkyscrapersGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'takuzu') return <TakuzuGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'dots-boxes') return <DotsBoxesGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'logic-grid') return <LogicGridGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
+    if (game.id === 'word-hive') return <WordHiveGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'missing-vowels') return <MissingVowelsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'quote-guess') return <QuoteGuessGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'letter-soup') return <LetterSoupGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'memory-match') return <MemoryMatchGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'symbol-sequence') return <SymbolSequenceGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'peg-solitaire') return <PegSolitaireGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'skyscrapers') return <SkyscrapersGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'takuzu') return <TakuzuGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'dots-boxes') return <DotsBoxesGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'logic-grid') return <LogicGridGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
     // MVP 12
-    if (game.id === 'word-bingo') return <WordBingoGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'vocab-builder') return <VocabBuilderGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'abbreviations') return <AbbreviationsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'dominoes') return <DominoesGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'shikaku') return <ShikakuGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'typeshift') return <TypeshiftGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
+    if (game.id === 'word-bingo') return <WordBingoGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'vocab-builder') return <VocabBuilderGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'abbreviations') return <AbbreviationsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'dominoes') return <DominoesGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'shikaku') return <ShikakuGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'typeshift') return <TypeshiftGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
     // MVP 13
-    if (game.id === 'word-morph') return <WordMorphGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'emoji-story') return <EmojiStoryGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'reversi') return <ReversiGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'last-letter') return <LastLetterGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'speed-tap') return <SpeedTapGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'number-maze') return <NumberMazeGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'mirror-puzzle') return <MirrorPuzzleGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
+    if (game.id === 'word-morph') return <WordMorphGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'emoji-story') return <EmojiStoryGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'reversi') return <ReversiGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'last-letter') return <LastLetterGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'speed-tap') return <SpeedTapGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'number-maze') return <NumberMazeGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'mirror-puzzle') return <MirrorPuzzleGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
     // MVP 14
-    if (game.id === 'mahjong') return <MahjongGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'checkers') return <CheckersGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'masyu') return <MasyuGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'tapa') return <TapaGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'fillomino') return <FillominoGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'acrostic') return <AcrosticGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'syllable-split') return <SyllableSplitGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'word-parts') return <WordPartsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'phonetic-spelling') return <PhoneticSpellingGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'emoji-sudoku') return <EmojiSudokuGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
+    if (game.id === 'mahjong') return <MahjongGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'checkers') return <CheckersGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'masyu') return <MasyuGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'tapa') return <TapaGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'fillomino') return <FillominoGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'acrostic') return <AcrosticGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'syllable-split') return <SyllableSplitGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'word-parts') return <WordPartsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'phonetic-spelling') return <PhoneticSpellingGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'emoji-sudoku') return <EmojiSudokuGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
     // MVP 15
-    if (game.id === 'letter-drop') return <LetterDropGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'word-maze') return <WordMazeGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'wordsmiths-duel') return <WordsmithsDuelGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'gravity-blocks') return <GravityBlocksGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
-    if (game.id === 'daily-challenge') return <DailyChallengeGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} />;
+    if (game.id === 'letter-drop') return <LetterDropGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'word-maze') return <WordMazeGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'wordsmiths-duel') return <WordsmithsDuelGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'gravity-blocks') return <GravityBlocksGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'daily-challenge') return <DailyChallengeGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
     return (
       <View style={s.placeholder}>
         <Text style={s.placeholderEmoji}>{game.emoji}</Text>
@@ -525,6 +562,7 @@ export default function GameScreen() {
           activeOpacity={0.7}
           onPress={() => {
             if (hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            timerPause();
             setShowHowToPlay(true);
           }}
         >
@@ -538,6 +576,7 @@ export default function GameScreen() {
           onPress={() => {
             if (hintsRemaining === 0) return;
             if (hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            timerPause();
             setShowHintModal(true);
           }}
         >
@@ -548,7 +587,7 @@ export default function GameScreen() {
         </TouchableOpacity>
       </View>
 
-      <View style={s.gameArea}>
+      <View style={s.gameArea} key={gameKey}>
         {renderGame()}
         {/* Sudoku-specific completion overlay (no internal modal) */}
         {sudokuDone && (
@@ -561,7 +600,7 @@ export default function GameScreen() {
               </Text>
               <TouchableOpacity
                 style={[s.sudokuDoneBtn, { backgroundColor: colors.ink }]}
-                onPress={() => { setSudokuDone(false); setRunning(true); setElapsed(0); }}
+                onPress={() => { setSudokuDone(false); timerReset(0); timerStart(); }}
                 activeOpacity={0.82}
               >
                 <Text style={[s.sudokuDoneBtnText, { color: colors.bg }]}>New Game</Text>
@@ -603,8 +642,29 @@ export default function GameScreen() {
         </View>
       )}
 
+      {/* Resume / New Game modal */}
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji={game.emoji}
+        gameName={game.name}
+        elapsedSeconds={savedElapsed}
+        onResume={() => {
+          timerRestore(savedElapsed);
+          timerStart();
+          setShowResumeModal(false);
+        }}
+        onStartFresh={() => {
+          clearGame(gameId!);
+          setSavedStateJSON(null);
+          setShowResumeModal(false);
+          timerReset(0);
+          timerStart();
+          setGameKey(k => k + 1);
+        }}
+      />
+
       {/* First-time tutorial modal */}
-      <Modal visible={showTutorial} transparent animationType="fade" onRequestClose={() => setShowTutorial(false)}>
+      <Modal visible={showTutorial} transparent animationType="fade" onRequestClose={() => { setShowTutorial(false); timerStart(); }}>
         <View style={s.tutorialOverlay}>
           <View style={[s.tutorialCard, { backgroundColor: colors.surface }]}>
             <Text style={[s.tutorialGameName, { color: colors.inkMuted }]}>{game.name}</Text>
@@ -612,7 +672,7 @@ export default function GameScreen() {
             <Text style={[s.tutorialBody, { color: colors.inkSoft }]}>{tutorial}</Text>
             <TouchableOpacity
               style={[s.tutorialBtn, { backgroundColor: colors.ink }]}
-              onPress={() => setShowTutorial(false)}
+              onPress={() => { setShowTutorial(false); timerStart(); }}
               activeOpacity={0.82}
             >
               <Text style={[s.tutorialBtnText, { color: colors.bg }]}>Let's Play!</Text>
@@ -622,8 +682,8 @@ export default function GameScreen() {
       </Modal>
 
       {/* HOW TO PLAY modal — free, unlimited */}
-      <Modal visible={showHowToPlay} transparent animationType="slide" onRequestClose={() => setShowHowToPlay(false)}>
-        <TouchableOpacity style={s.htpOverlay} activeOpacity={1} onPress={() => setShowHowToPlay(false)}>
+      <Modal visible={showHowToPlay} transparent animationType="slide" onRequestClose={() => { setShowHowToPlay(false); timerResume(); }}>
+        <TouchableOpacity style={s.htpOverlay} activeOpacity={1} onPress={() => { setShowHowToPlay(false); timerResume(); }}>
           <TouchableOpacity activeOpacity={1} onPress={() => {}}>
             <View style={[s.htpSheet, { backgroundColor: colors.surface }]}>
               <View style={s.htpHandle} />
@@ -645,7 +705,7 @@ export default function GameScreen() {
               </ScrollView>
               <TouchableOpacity
                 style={[s.htpBtn, { backgroundColor: colors.ink }]}
-                onPress={() => setShowHowToPlay(false)}
+                onPress={() => { setShowHowToPlay(false); timerResume(); }}
                 activeOpacity={0.82}
               >
                 <Text style={[s.htpBtnText, { color: colors.bg }]}>Got it, let's play!</Text>
@@ -656,7 +716,7 @@ export default function GameScreen() {
       </Modal>
 
       {/* PROGRESSIVE HINT modal — limited, with penalty */}
-      <Modal visible={showHintModal} transparent animationType="fade" onRequestClose={() => setShowHintModal(false)}>
+      <Modal visible={showHintModal} transparent animationType="fade" onRequestClose={() => { setShowHintModal(false); timerResume(); }}>
         <TouchableOpacity style={s.hintOverlay} activeOpacity={1} onPress={() => setShowHintModal(false)}>
           <TouchableOpacity activeOpacity={1} onPress={() => {}}>
             <View style={[s.hintCard, { backgroundColor: colors.surface }]}>
@@ -679,7 +739,7 @@ export default function GameScreen() {
               <View style={s.hintBtnRow}>
                 <TouchableOpacity
                   style={[s.hintBtn, { backgroundColor: colors.surface, borderWidth: 1.5, borderColor: colors.rule }]}
-                  onPress={() => setShowHintModal(false)}
+                  onPress={() => { setShowHintModal(false); timerResume(); }}
                   activeOpacity={0.82}
                 >
                   <Text style={[s.hintBtnText, { color: colors.inkSoft }]}>Not now</Text>
@@ -691,6 +751,7 @@ export default function GameScreen() {
                     setHintsRemaining(r => Math.max(r - 1, 0));
                     setSessionHintsUsed(h => h + 1);
                     setShowHintModal(false);
+                    timerResume();
                   }}
                   activeOpacity={0.82}
                 >
@@ -718,8 +779,8 @@ const makeStyles = (colors: ReturnType<typeof useTheme>) => StyleSheet.create({
     gap: 8,
   },
   iconBtn: {
-    width: 40,
-    height: 40,
+    width: 44,
+    height: 44,
     borderRadius: 999,
     backgroundColor: colors.surface,
     alignItems: 'center',
@@ -864,7 +925,7 @@ const makeStyles = (colors: ReturnType<typeof useTheme>) => StyleSheet.create({
     paddingTop: 12,
     paddingHorizontal: 24,
     paddingBottom: 40,
-    maxHeight: '85%',
+    maxHeight: '80%',
   },
   htpHandle: {
     width: 40, height: 4, borderRadius: 2,
@@ -889,7 +950,7 @@ const makeStyles = (colors: ReturnType<typeof useTheme>) => StyleSheet.create({
     fontSize: 22,
     letterSpacing: -0.4,
   },
-  htpScroll: { maxHeight: 280, marginBottom: 16 },
+  htpScroll: { flex: 1, marginBottom: 16 },
   htpBody: {
     fontFamily: fonts.semiBold,
     fontSize: 15,

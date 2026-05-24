@@ -3,10 +3,12 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView } from 'rea
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 // Daily Challenge: a rotating set of mini challenges (one per "day")
@@ -65,11 +67,14 @@ const CHALLENGES = [
   },
 ];
 
-export function DailyChallengeGame({ onComplete, onBack }: Props) {
+export function DailyChallengeGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
 
   // Use day-of-year as seed to pick challenge
   const challengeIdx = useMemo(() => {
@@ -83,8 +88,10 @@ export function DailyChallengeGame({ onComplete, onBack }: Props) {
 
   const challenge = CHALLENGES[challengeIdx];
 
-  const [chosen, setChosen] = useState<string | null>(null);
+  const [chosen, setChosen] = useState<string | null>(() => saved?.chosen ?? null);
   const [done, setDone] = useState(false);
+
+  useSaveGame('daily-challenge', () => ({ chosen, challengeIdx }), !done, [chosen], elapsedRef);
   const [won, setWon] = useState(false);
   const [round, setRound] = useState(0);
   const [score, setScore] = useState(0);

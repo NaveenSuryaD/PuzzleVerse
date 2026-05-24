@@ -3,10 +3,12 @@ import { View, Text, StyleSheet, TouchableOpacity, TextInput, Modal, ScrollView 
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 const PUZZLES = [
@@ -20,18 +22,22 @@ const PUZZLES = [
   { sentence: 'pots eht kcolc', answer: 'stop the clock' },
 ];
 
-export function BackwardsWordsGame({ onComplete, onBack }: Props) {
+export function BackwardsWordsGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [round, setRound] = useState(0);
-  const [score, setScore] = useState(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [round, setRound] = useState<number>(() => saved?.round ?? 0);
+  const [score, setScore] = useState<number>(() => saved?.score ?? 0);
   const [input, setInput] = useState('');
   const [result, setResult] = useState<'correct' | 'wrong' | null>(null);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
+
+  useSaveGame('backwards-words', () => ({ round, score }), !done, [round, score], elapsedRef);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 

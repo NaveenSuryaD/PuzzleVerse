@@ -3,30 +3,37 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme, type ThemeColors } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { generatePatterns } from './generator';
+import type { PatternPuzzle } from './types';
 import { PatternItemView } from './PatternItem';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 const TOTAL = 8;
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
-export function PatternRecogGame({ onComplete, onBack }: Props) {
+export function PatternRecogGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
 
-  const [puzzles, setPuzzles] = useState(() => generatePatterns(TOTAL));
-  const [idx, setIdx] = useState(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [puzzles, setPuzzles] = useState<PatternPuzzle[]>(() => saved?.puzzles ?? generatePatterns(TOTAL));
+  const [idx, setIdx] = useState<number>(() => saved?.idx ?? 0);
   const [selected, setSelected] = useState<number | null>(null);
-  const [correct, setCorrect] = useState(0);
+  const [correct, setCorrect] = useState<number>(() => saved?.correct ?? 0);
   const [flash, setFlash] = useState<'correct' | 'wrong' | null>(null);
   const [done, setDone] = useState(false);
 
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
+
+  useSaveGame('pattern-recog', () => ({ puzzles, idx, correct }), !done, [idx, correct], elapsedRef);
 
   useEffect(() => {
     timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
@@ -57,7 +64,7 @@ export function PatternRecogGame({ onComplete, onBack }: Props) {
         completedRef.current = true;
         if (timerRef.current) clearInterval(timerRef.current);
         setDone(true);
-        onComplete(true, elapsedRef.current);
+        onComplete(correct + (isCorrect ? 1 : 0) >= 6, elapsedRef.current);
       } else {
         setIdx(nextIdx);
       }

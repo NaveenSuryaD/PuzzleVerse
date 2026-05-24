@@ -4,28 +4,34 @@ import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { STATIC_PUZZLES } from './puzzles';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
 
-export function CryptogramGame({ onComplete, onBack }: Props) {
+export function CryptogramGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [puzzleIdx] = useState(() => Math.floor(Math.random() * STATIC_PUZZLES.length));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [puzzleIdx] = useState<number>(() => saved?.puzzleIdx ?? Math.floor(Math.random() * STATIC_PUZZLES.length));
   const puzzle = STATIC_PUZZLES[puzzleIdx];
 
   // User's guesses: encoded letter -> user's decoded letter
-  const [guesses, setGuesses] = useState<Record<string, string>>({});
+  const [guesses, setGuesses] = useState<Record<string, string>>(() => saved?.guesses ?? {});
   const [selectedEncoded, setSelectedEncoded] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
+
+  useSaveGame('cryptogram', () => ({ puzzleIdx, guesses }), !done, [puzzleIdx, guesses], elapsedRef);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 

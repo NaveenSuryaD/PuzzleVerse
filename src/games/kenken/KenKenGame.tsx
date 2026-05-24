@@ -4,30 +4,35 @@ import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { KENKEN_PUZZLES } from './puzzles';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 const CAGE_COLORS = ['#FFE0CC', '#D8ECD4', '#FFEDB8', '#E3D8FF', '#CFE3F5', '#FFD5E5', '#D4F0FF', '#FFEFCC'];
 
-export function KenKenGame({ onComplete, onBack }: Props) {
+export function KenKenGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
   const puzzle = KENKEN_PUZZLES[0];
   const N = puzzle.size;
   const CELL = 72;
 
   const [grid, setGrid] = useState<(number | null)[][]>(() =>
-    Array.from({ length: N }, () => Array(N).fill(null))
+    saved?.grid ?? Array.from({ length: N }, () => Array(N).fill(null))
   );
   const [selected, setSelected] = useState<[number, number] | null>(null);
   const [done, setDone] = useState(false);
 
+  useSaveGame('kenken', () => ({ grid }), !done, [grid], elapsedRef);
   const s = useMemo(() => makeStyles(colors), [colors]);
 
   useEffect(() => {

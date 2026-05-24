@@ -3,10 +3,12 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 type Phase = 'idle' | 'wait' | 'tap' | 'tapped' | 'done';
@@ -14,19 +16,23 @@ type Phase = 'idle' | 'wait' | 'tap' | 'tapped' | 'done';
 const NUM_ROUNDS = 5;
 const WIN_AVG_MS = 500; // win if avg reaction < 500ms
 
-export function SpeedTapGame({ onComplete, onBack }: Props) {
+export function SpeedTapGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
   const [phase, setPhase] = useState<Phase>('idle');
-  const [round, setRound] = useState(0);
-  const [reactions, setReactions] = useState<number[]>([]);
+  const [round, setRound] = useState<number>(() => saved?.round ?? 0);
+  const [reactions, setReactions] = useState<number[]>(() => saved?.reactions ?? []);
   const [currentReaction, setCurrentReaction] = useState<number | null>(null);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
   const [tooEarly, setTooEarly] = useState(false);
+
+  useSaveGame('speed-tap', () => ({ round, reactions }), !done, [round, reactions], elapsedRef);
 
   const tapStartRef = useRef(0);
   const waitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);

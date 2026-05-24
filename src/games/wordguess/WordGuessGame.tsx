@@ -36,6 +36,7 @@ import {
 import type { WordDifficulty } from './generator';
 import { playSound } from '../../audio/sounds';
 import type { LetterState, KeyState, GameMode, GameStatus } from './types';
+import { useSaveGame } from '../../utils/gameSave';
 
 const MAX_GUESSES = 6;
 const WORD_LENGTH = 5;
@@ -52,6 +53,7 @@ interface WordGuessGameProps {
   difficulty?: WordDifficulty;
   onComplete?: (won: boolean, attempts: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 export const WordGuessGame: React.FC<WordGuessGameProps> = ({
@@ -60,6 +62,7 @@ export const WordGuessGame: React.FC<WordGuessGameProps> = ({
   difficulty: initialDifficulty = 'medium',
   onComplete,
   onBack,
+  savedStateJSON,
 }) => {
   const colors = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -70,6 +73,9 @@ export const WordGuessGame: React.FC<WordGuessGameProps> = ({
   const [difficulty, setDifficulty] = React.useState<WordDifficulty>(initialDifficulty);
   const [hardMode, setHardMode] = useState(false);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const savedParsed = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+
   const initGame = (diff: WordDifficulty = difficulty) => ({
     answer: mode === 'daily' ? pickDailyWord(dateOverride) : pickWordByDifficulty(diff),
     guesses: [] as string[],
@@ -78,8 +84,22 @@ export const WordGuessGame: React.FC<WordGuessGameProps> = ({
     gameStatus: 'playing' as GameStatus,
   });
 
-  const [state, setState] = useState(() => initGame(initialDifficulty));
-  const [letterStates, setLetterStates] = useState<Record<string, KeyState>>({});
+  type WGState = ReturnType<typeof initGame>;
+  const [state, setState] = useState<WGState>(() => {
+    if (savedParsed?.state?.answer) return savedParsed.state as WGState;
+    return initGame(initialDifficulty);
+  });
+  const [letterStates, setLetterStates] = useState<Record<string, KeyState>>(() => savedParsed?.letterStates ?? {});
+
+  const elapsedRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, []);
+
+  useSaveGame('word-guess', () => ({ state, letterStates }), state.gameStatus === 'playing', [state.guesses.length, state.currentGuess], elapsedRef);
   const [flipRowIndex, setFlipRowIndex] = useState(-1);
   const [bounceRowIndex, setBounceRowIndex] = useState(-1);
   const [shakeRowIndex, setShakeRowIndex] = useState(-1);

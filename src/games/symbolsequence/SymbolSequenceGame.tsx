@@ -4,10 +4,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 type IconName = 'star' | 'heart' | 'moon' | 'sunny' | 'flash' | 'diamond';
@@ -21,18 +23,22 @@ const SYMBOLS: Array<{ icon: IconName; color: string }> = [
   { icon: 'diamond', color: '#2ECC71' },
 ];
 
-export function SymbolSequenceGame({ onComplete, onBack }: Props) {
+export function SymbolSequenceGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
   const [phase, setPhase] = useState<'show' | 'input' | 'result'>('show');
   const [sequence, setSequence] = useState<number[]>([]);
   const [playerInput, setPlayerInput] = useState<number[]>([]);
   const [showing, setShowing] = useState<number>(-1);
-  const [round, setRound] = useState(1);
+  const [round, setRound] = useState<number>(() => saved?.round ?? 1);
   const [done, setDone] = useState(false);
+
+  useSaveGame('symbol-sequence', () => ({ round }), !done, [round], elapsedRef);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 

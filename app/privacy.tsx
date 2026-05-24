@@ -99,7 +99,7 @@ export default function PrivacyScreen() {
           </View>
           <View>
             <Text style={s.appName}>PuzzleVerse</Text>
-            <Text style={s.metaDate}>Last updated: June 2025</Text>
+            <Text style={s.metaDate}>Last updated: May 2026</Text>
           </View>
         </View>
 
@@ -173,7 +173,7 @@ export default function PrivacyScreen() {
         </Section>
 
         <View style={s.footer}>
-          <Text style={s.footerText}>© 2025 PuzzleVerse</Text>
+          <Text style={s.footerText}>© 2026 PuzzleVerse</Text>
         </View>
       </ScrollView>
     </SafeAreaView>

@@ -3,10 +3,12 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 // Mirror Puzzle: tap cells to toggle; left half auto-mirrors to right half
@@ -43,20 +45,22 @@ const PUZZLES = [
 
 const CELL_SIZE = 60;
 
-export function MirrorPuzzleGame({ onComplete, onBack }: Props) {
+export function MirrorPuzzleGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [puzIdx, setPuzIdx] = useState(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [puzIdx, setPuzIdx] = useState<number>(() => saved?.puzIdx ?? 0);
   const puz = PUZZLES[puzIdx];
   const SIZE = puz.size;
   const HALF = Math.floor(SIZE / 2);
 
   // User controls only left half; right half mirrors it
-  const [left, setLeft] = useState<number[][]>(
-    Array.from({ length: SIZE }, () => Array(HALF).fill(0))
+  const [left, setLeft] = useState<number[][]>(() =>
+    saved?.left ?? Array.from({ length: SIZE }, () => Array(HALF).fill(0))
   );
 
   const s = useMemo(() => makeStyles(colors), [colors]);
@@ -82,6 +86,8 @@ export function MirrorPuzzleGame({ onComplete, onBack }: Props) {
 
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
+
+  useSaveGame('mirror-puzzle', () => ({ puzIdx, left }), !done, [puzIdx, left], elapsedRef);
 
   // Build full grid with mirror
   const fullGrid = useMemo(() => {

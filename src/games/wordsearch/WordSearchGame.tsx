@@ -15,6 +15,7 @@ import { useTheme, type ThemeColors } from '../../theme/useTheme';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { fonts } from '../../theme/typography';
 import { playSound } from '../../audio/sounds';
+import { useSaveGame } from '../../utils/gameSave';
 import {
   generateWordSearch,
   getCellsOnLine,
@@ -74,16 +75,19 @@ function buildFoundCellMap(words: PlacedWord[]): Map<string, number> {
 interface WordSearchGameProps {
   onComplete?: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
-export const WordSearchGame: React.FC<WordSearchGameProps> = ({ onComplete, onBack }) => {
+export const WordSearchGame: React.FC<WordSearchGameProps> = ({ onComplete, onBack, savedStateJSON }) => {
   const colors = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
   const palettes = useMemo(() => FOUND_PALETTES(colors), [colors]);
   const hapticsEnabled = useSettingsStore(st => st.hapticsEnabled);
 
-  const [puzzle, setPuzzle] = useState<WordSearchPuzzle>(() => generateWordSearch());
-  const [words, setWords] = useState<PlacedWord[]>(() => puzzle.words);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [puzzle, setPuzzle] = useState<WordSearchPuzzle>(() => saved?.puzzle ?? generateWordSearch());
+  const [words, setWords] = useState<PlacedWord[]>(() => saved?.words ?? puzzle.words);
   const [selectedCells, setSelectedCells] = useState<CellCoord[]>([]);
   const [showComplete, setShowComplete] = useState(false);
   const [completedTime, setCompletedTime] = useState(0);
@@ -99,6 +103,8 @@ export const WordSearchGame: React.FC<WordSearchGameProps> = ({ onComplete, onBa
 
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useSaveGame('word-search', () => ({ puzzle, words }), !showComplete, [words], elapsedRef);
 
   // Keep refs in sync
   useEffect(() => { wordsRef.current = words; }, [words]);

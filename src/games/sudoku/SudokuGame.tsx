@@ -22,6 +22,7 @@ import { fonts } from '../../theme/typography';
 import { easings } from '../../theme/animations';
 import { generateSudoku, type Difficulty } from './generator';
 import type { SudokuState } from './types';
+import { useSaveGame } from '../../utils/gameSave';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const GRID_SIZE = Math.min(SCREEN_WIDTH - 22 * 2, 360);
@@ -31,12 +32,14 @@ interface SudokuGameProps {
   difficulty?: Difficulty;
   daily?: boolean;
   onComplete?: (won: boolean, timeSeconds: number) => void;
+  savedStateJSON?: string;
 }
 
 export const SudokuGame: React.FC<SudokuGameProps> = ({
   difficulty: initialDifficulty,
   daily = false,
   onComplete,
+  savedStateJSON,
 }) => {
   const resolvedInitialDifficulty: Difficulty = initialDifficulty ?? (daily ? 'medium' : 'easy');
   const colors = useTheme();
@@ -47,6 +50,9 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
 
   const [currentDifficulty, setCurrentDifficulty] = useState<Difficulty>(resolvedInitialDifficulty);
   const [generating, setGenerating] = useState(true);
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const savedParsed = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
 
   const buildEmptyState = (puzzle: ReturnType<typeof generateSudoku>): SudokuState => ({
     puzzle,
@@ -60,8 +66,35 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
     isComplete: false,
   });
 
+  const buildSavedState = (): SudokuState | null => {
+    if (!savedParsed?.puzzle || !savedParsed?.board) return null;
+    return {
+      puzzle: savedParsed.puzzle,
+      board: savedParsed.board,
+      notes: (savedParsed.notes as number[][][]).map(row =>
+        row.map(cell => new Set<number>(cell))
+      ),
+      selectedCell: null,
+      pencilMode: false,
+      errors: savedParsed.errors ?? Array.from({ length: 9 }, () => Array(9).fill(false)),
+      isComplete: false,
+    };
+  };
+
   const [state, setState] = useState<SudokuState | null>(null);
   const [canUndo, setCanUndo] = useState(false);
+  const elapsedRef = useRef(0);
+
+  useSaveGame('sudoku', () => {
+    if (!state) return null;
+    return {
+      puzzle: state.puzzle,
+      board: state.board,
+      notes: state.notes.map(row => row.map(cell => Array.from(cell))),
+      errors: state.errors,
+      difficulty: currentDifficulty,
+    };
+  }, !state?.isComplete, [state?.board], elapsedRef);
 
   // Undo stack — stored in a ref to avoid stale closures in handlers
   interface HistoryEntry {
@@ -95,8 +128,13 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
   // Generate the first puzzle off the initial render to avoid blocking the JS thread
   useEffect(() => {
     genTimeoutRef.current = setTimeout(() => {
-      const puzzle = generateSudoku(resolvedInitialDifficulty);
-      setState(buildEmptyState(puzzle));
+      const restored = buildSavedState();
+      if (restored) {
+        setState(restored);
+      } else {
+        const puzzle = generateSudoku(resolvedInitialDifficulty);
+        setState(buildEmptyState(puzzle));
+      }
       setGenerating(false);
     }, 60);
     return () => { if (genTimeoutRef.current) clearTimeout(genTimeoutRef.current); };
@@ -105,7 +143,10 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
 
   useEffect(() => {
     if (generating || !state) return;
-    timerRef.current = setInterval(() => setElapsedSeconds(s => s + 1), 1000);
+    timerRef.current = setInterval(() => {
+      elapsedRef.current += 1;
+      setElapsedSeconds(s => s + 1);
+    }, 1000);
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
       if (genTimeoutRef.current) clearTimeout(genTimeoutRef.current);
@@ -143,6 +184,24 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
       for (let c = 0; c < 9; c++)
         if (board[r][c] !== solution[r][c]) return false;
     return true;
+  }, []);
+
+  const hasConflict = useCallback((board: number[][], row: number, col: number, value: number): boolean => {
+    if (!value) return false;
+    for (let c = 0; c < 9; c++) {
+      if (c !== col && board[row][c] === value) return true;
+    }
+    for (let r = 0; r < 9; r++) {
+      if (r !== row && board[r][col] === value) return true;
+    }
+    const boxRow = Math.floor(row / 3) * 3;
+    const boxCol = Math.floor(col / 3) * 3;
+    for (let r = boxRow; r < boxRow + 3; r++) {
+      for (let c = boxCol; c < boxCol + 3; c++) {
+        if ((r !== row || c !== col) && board[r][c] === value) return true;
+      }
+    }
+    return false;
   }, []);
 
   const handleCellPress = useCallback((row: number, col: number) => {
@@ -200,11 +259,21 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
           newNotes[boxR + i][boxC + j].delete(num);
 
       const newErrors = prev.errors.map(row => [...row]);
-      const isWrong = num !== 0 && num !== prev.puzzle.solution[r][c];
-      newErrors[r][c] = isWrong;
-      const isComplete = !isWrong && checkComplete(newBoard, prev.puzzle.solution);
+      // Only flag visible conflicts (same digit in row/col/box), not solution mismatch
+      newErrors[r][c] = hasConflict(newBoard, r, c, num);
+      // Recheck all peers — resolving a conflict elsewhere may clear their error
+      for (let i = 0; i < 9; i++) {
+        if (i !== r && newBoard[i][c]) newErrors[i][c] = hasConflict(newBoard, i, c, newBoard[i][c]);
+        if (i !== c && newBoard[r][i]) newErrors[r][i] = hasConflict(newBoard, r, i, newBoard[r][i]);
+      }
+      for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) {
+        const br = boxR + i, bc = boxC + j;
+        if ((br !== r || bc !== c) && newBoard[br][bc]) newErrors[br][bc] = hasConflict(newBoard, br, bc, newBoard[br][bc]);
+      }
+      const isConflict = newErrors[r][c];
+      const isComplete = checkComplete(newBoard, prev.puzzle.solution);
 
-      if (isWrong) {
+      if (isConflict) {
         setTimeout(() => triggerShake(), 0);
       } else {
         if (hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -219,7 +288,7 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
 
       return { ...prev, board: newBoard, notes: newNotes, errors: newErrors, isComplete };
     });
-  }, [hapticsEnabled, pushUndo, triggerShake, triggerCelebration, checkComplete, onComplete, elapsedSeconds]);
+  }, [hapticsEnabled, pushUndo, triggerShake, triggerCelebration, checkComplete, hasConflict, onComplete, elapsedSeconds]);
 
   const handleErase = useCallback(() => {
     const cur = stateRef.current;
@@ -233,11 +302,22 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
       newBoard[r][c] = 0;
       const newErrors = prev.errors.map(row => [...row]);
       newErrors[r][c] = false;
+      // Recheck peers — erasing may resolve their conflicts
+      const boxR = Math.floor(r / 3) * 3;
+      const boxC = Math.floor(c / 3) * 3;
+      for (let i = 0; i < 9; i++) {
+        if (i !== r && newBoard[i][c]) newErrors[i][c] = hasConflict(newBoard, i, c, newBoard[i][c]);
+        if (i !== c && newBoard[r][i]) newErrors[r][i] = hasConflict(newBoard, r, i, newBoard[r][i]);
+      }
+      for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) {
+        const br = boxR + i, bc = boxC + j;
+        if ((br !== r || bc !== c) && newBoard[br][bc]) newErrors[br][bc] = hasConflict(newBoard, br, bc, newBoard[br][bc]);
+      }
       const newNotes = prev.notes.map(row => row.map(cell => new Set(cell)));
       newNotes[r][c] = new Set();
       return { ...prev, board: newBoard, errors: newErrors, notes: newNotes };
     });
-  }, [hapticsEnabled, pushUndo]);
+  }, [hapticsEnabled, pushUndo, hasConflict]);
 
   const togglePencil = useCallback(() => {
     if (hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -248,6 +328,7 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
     if (timerRef.current) clearInterval(timerRef.current);
     if (genTimeoutRef.current) clearTimeout(genTimeoutRef.current);
     setElapsedSeconds(0);
+    elapsedRef.current = 0;
     setCurrentDifficulty(d);
     setGenerating(true);
     undoStackRef.current = [];
@@ -256,7 +337,10 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
       const puzzle = generateSudoku(d);
       setState(buildEmptyState(puzzle));
       setGenerating(false);
-      timerRef.current = setInterval(() => setElapsedSeconds(s => s + 1), 1000);
+      timerRef.current = setInterval(() => {
+        elapsedRef.current += 1;
+        setElapsedSeconds(s => s + 1);
+      }, 1000);
     }, 60);
   }, []);
 
@@ -341,14 +425,9 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
 
   return (
     <View style={styles.container}>
-      {/* Header row */}
+      {/* Header row — difficulty badge only; timer is shown in game header */}
       <View style={styles.headerRow}>
-        {showTimer ? (
-          <View style={styles.timerPill}>
-            <Ionicons name="time-outline" size={14} color={colors.inkSoft} />
-            <Text style={styles.timerText}>{formatTime(elapsedSeconds)}</Text>
-          </View>
-        ) : <View />}
+        <View />
         <View style={styles.headerRight}>
           {state?.pencilMode && (
             <View style={[styles.badge, { backgroundColor: colors.word.bg }]}>
@@ -585,6 +664,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   cellText: {
     fontSize: CELL_SIZE * 0.52,
     lineHeight: CELL_SIZE * 0.66,
+    color: colors.ink,
   },
   notesGrid: {
     width: CELL_SIZE - 2,

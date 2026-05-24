@@ -3,10 +3,12 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView } from 'rea
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 // Simplified Mahjong Solitaire: match pairs of free tiles
@@ -35,18 +37,21 @@ function generateTiles(): { id: number; symbol: string; row: number; col: number
   }));
 }
 
-export function MahjongGame({ onComplete, onBack }: Props) {
+export function MahjongGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [tiles, setTiles] = useState(() => generateTiles());
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [tiles, setTiles] = useState<ReturnType<typeof generateTiles>>(() => saved?.tiles ?? generateTiles());
   const [selected, setSelected] = useState<number | null>(null);
-  const [pairs, setPairs] = useState(0);
+  const [pairs, setPairs] = useState<number>(() => saved?.pairs ?? 0);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
 
+  useSaveGame('mahjong', () => ({ tiles, pairs }), !done, [tiles, pairs], elapsedRef);
   const s = useMemo(() => makeStyles(colors), [colors]);
 
   useEffect(() => {

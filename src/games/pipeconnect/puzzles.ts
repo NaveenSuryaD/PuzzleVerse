@@ -17,6 +17,22 @@ export const PIPE_PUZZLES: RawCell[][][] = [
     [{ type: 'I', solvedRotation: 0 }, { type: 'I', solvedRotation: 0 }, { type: 'I', solvedRotation: 0 }, { type: 'T', solvedRotation: 3 }, { type: 'I', solvedRotation: 0 }],
     [{ type: 'L', solvedRotation: 1 }, { type: 'I', solvedRotation: 1 }, { type: 'I', solvedRotation: 1 }, { type: 'L', solvedRotation: 2 }, { type: 'E', solvedRotation: 0 }],
   ],
+  // Puzzle 2
+  [
+    [{ type: 'E', solvedRotation: 3 }, { type: 'L', solvedRotation: 2 }, { type: 'I', solvedRotation: 0 }, { type: 'L', solvedRotation: 3 }, { type: 'E', solvedRotation: 2 }],
+    [{ type: 'I', solvedRotation: 0 }, { type: 'T', solvedRotation: 0 }, { type: 'I', solvedRotation: 0 }, { type: 'T', solvedRotation: 2 }, { type: 'I', solvedRotation: 0 }],
+    [{ type: 'L', solvedRotation: 0 }, { type: 'T', solvedRotation: 3 }, { type: '+', solvedRotation: 0 }, { type: 'T', solvedRotation: 1 }, { type: 'L', solvedRotation: 1 }],
+    [{ type: 'I', solvedRotation: 0 }, { type: 'L', solvedRotation: 0 }, { type: 'I', solvedRotation: 0 }, { type: 'L', solvedRotation: 1 }, { type: 'I', solvedRotation: 0 }],
+    [{ type: 'E', solvedRotation: 0 }, { type: 'I', solvedRotation: 1 }, { type: 'L', solvedRotation: 1 }, { type: 'I', solvedRotation: 1 }, { type: 'E', solvedRotation: 0 }],
+  ],
+  // Puzzle 3
+  [
+    [{ type: 'L', solvedRotation: 1 }, { type: 'T', solvedRotation: 2 }, { type: 'L', solvedRotation: 2 }, { type: 'I', solvedRotation: 1 }, { type: 'E', solvedRotation: 3 }],
+    [{ type: 'I', solvedRotation: 0 }, { type: 'I', solvedRotation: 0 }, { type: 'T', solvedRotation: 1 }, { type: 'L', solvedRotation: 3 }, { type: 'I', solvedRotation: 0 }],
+    [{ type: 'T', solvedRotation: 0 }, { type: 'L', solvedRotation: 2 }, { type: 'L', solvedRotation: 1 }, { type: 'T', solvedRotation: 2 }, { type: 'L', solvedRotation: 3 }],
+    [{ type: 'L', solvedRotation: 0 }, { type: 'T', solvedRotation: 3 }, { type: 'I', solvedRotation: 0 }, { type: 'L', solvedRotation: 0 }, { type: 'I', solvedRotation: 0 }],
+    [{ type: 'E', solvedRotation: 0 }, { type: 'L', solvedRotation: 1 }, { type: 'I', solvedRotation: 1 }, { type: 'I', solvedRotation: 1 }, { type: 'E', solvedRotation: 2 }],
+  ],
 ];
 
 // Directions for each type at rotation 0

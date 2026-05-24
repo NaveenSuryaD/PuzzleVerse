@@ -3,10 +3,12 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 type Cell = 0 | 1 | 2; // 0=empty, 1=player(black), 2=AI(white)
@@ -69,17 +71,21 @@ function aiMove(board: Cell[][]): [number,number] | null {
   return best;
 }
 
-export function ReversiGame({ onComplete, onBack }: Props) {
+export function ReversiGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [board, setBoard] = useState<Cell[][]>(initBoard);
-  const [turn, setTurn] = useState<1|2>(1);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [board, setBoard] = useState<Cell[][]>(() => saved?.board ?? initBoard());
+  const [turn, setTurn] = useState<1|2>(() => (saved?.turn ?? 1) as 1|2);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
   const [aiThinking, setAiThinking] = useState(false);
+
+  useSaveGame('reversi', () => ({ board, turn }), !done, [board, turn], elapsedRef);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 

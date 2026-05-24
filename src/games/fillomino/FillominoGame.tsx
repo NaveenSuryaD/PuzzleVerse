@@ -3,10 +3,12 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 // Fillomino: fill grid so each region of N cells contains exactly N
@@ -32,16 +34,20 @@ const PUZZLE = {
 
 const CELL_SIZE = 56;
 
-export function FillominoGame({ onComplete, onBack }: Props) {
+export function FillominoGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
   const SIZE = PUZZLE.size;
-  const [grid, setGrid] = useState<number[][]>(PUZZLE.given.map(row => [...row]));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [grid, setGrid] = useState<number[][]>(() => saved?.grid ?? PUZZLE.given.map(row => [...row]));
   const [selected, setSelected] = useState<[number,number] | null>(null);
   const [done, setDone] = useState(false);
+
+  useSaveGame('fillomino', () => ({ grid }), !done, [grid], elapsedRef);
   const [won, setWon] = useState(false);
 
   const s = useMemo(() => makeStyles(colors), [colors]);

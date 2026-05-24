@@ -4,10 +4,12 @@ import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { WORD_LADDER_PUZZLES, FOUR_LETTER_WORDS } from './puzzles';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 function differsByOne(a: string, b: string): boolean {
@@ -19,18 +21,22 @@ function differsByOne(a: string, b: string): boolean {
   return diffs === 1;
 }
 
-export function WordLadderGame({ onComplete, onBack }: Props) {
+export function WordLadderGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [puzzleIdx] = useState(() => Math.floor(Math.random() * WORD_LADDER_PUZZLES.length));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [puzzleIdx] = useState<number>(() => saved?.puzzleIdx ?? Math.floor(Math.random() * WORD_LADDER_PUZZLES.length));
   const puzzle = WORD_LADDER_PUZZLES[puzzleIdx];
-  const [ladder, setLadder] = useState<string[]>([puzzle.start]);
+  const [ladder, setLadder] = useState<string[]>(() => saved?.ladder ?? [puzzle.start]);
   const [input, setInput] = useState('');
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
+
+  useSaveGame('word-ladder', () => ({ puzzleIdx, ladder }), !done, [ladder], elapsedRef);
   const [won, setWon] = useState(false);
 
   const s = useMemo(() => makeStyles(colors), [colors]);

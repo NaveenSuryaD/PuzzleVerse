@@ -3,10 +3,12 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 type Piece = 0 | 1 | 2 | 3 | 4; // 0=empty, 1=player, 2=playerKing, 3=AI, 4=AIKing
@@ -57,17 +59,21 @@ function getMoves(board: Board, r: number, c: number): { nr: number; nc: number;
   return moves;
 }
 
-export function CheckersGame({ onComplete, onBack }: Props) {
+export function CheckersGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [board, setBoard] = useState<Board>(initBoard);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [board, setBoard] = useState<Board>(() => saved?.board ?? initBoard());
   const [selected, setSelected] = useState<[number,number] | null>(null);
-  const [turn, setTurn] = useState<'player'|'ai'>('player');
+  const [turn, setTurn] = useState<'player'|'ai'>(() => (saved?.turn ?? 'player') as 'player'|'ai');
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
+
+  useSaveGame('checkers', () => ({ board, turn }), !done, [board, turn], elapsedRef);
   const [aiThinking, setAiThinking] = useState(false);
 
   const s = useMemo(() => makeStyles(colors), [colors]);

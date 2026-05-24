@@ -1,17 +1,22 @@
-import type { MineGrid, MineCell } from './types';
+import type { MineGrid } from './types';
 
-const ROWS = 8, COLS = 8, MINES = 10;
+export type MsDifficulty = 'easy' | 'medium' | 'hard';
 
-function createEmptyGrid(): MineGrid {
-  return Array.from({ length: ROWS }, () =>
+export const DIFFICULTY_CONFIG: Record<MsDifficulty, { rows: number; cols: number; mines: number }> = {
+  easy:   { rows: 8,  cols: 8,  mines: 10 },
+  medium: { rows: 10, cols: 10, mines: 20 },
+  hard:   { rows: 12, cols: 12, mines: 35 },
+};
+
+export function initGrid(firstR: number, firstC: number, diff: MsDifficulty = 'easy'): MineGrid {
+  const { rows: ROWS, cols: COLS, mines: MINES } = DIFFICULTY_CONFIG[diff];
+
+  const grid: MineGrid = Array.from({ length: ROWS }, () =>
     Array.from({ length: COLS }, () => ({
       isMine: false, isRevealed: false, isFlagged: false, adjacentMines: 0,
     }))
   );
-}
 
-export function initGrid(firstR: number, firstC: number): MineGrid {
-  const grid = createEmptyGrid();
   const forbidden = new Set<string>();
   for (let dr = -1; dr <= 1; dr++)
     for (let dc = -1; dc <= 1; dc++) {
@@ -24,8 +29,7 @@ export function initGrid(firstR: number, firstC: number): MineGrid {
   while (placed < MINES) {
     const r = Math.floor(Math.random() * ROWS);
     const c = Math.floor(Math.random() * COLS);
-    const key = `${r},${c}`;
-    if (!grid[r][c].isMine && !forbidden.has(key)) {
+    if (!grid[r][c].isMine && !forbidden.has(`${r},${c}`)) {
       grid[r][c].isMine = true;
       placed++;
     }
@@ -47,7 +51,8 @@ export function initGrid(firstR: number, firstC: number): MineGrid {
   return grid;
 }
 
-export function reveal(grid: MineGrid, r: number, c: number): MineGrid {
+export function reveal(grid: MineGrid, r: number, c: number, diff: MsDifficulty = 'easy'): MineGrid {
+  const { rows: ROWS, cols: COLS } = DIFFICULTY_CONFIG[diff];
   const next = grid.map(row => row.map(cell => ({ ...cell })));
   const queue: [number, number][] = [[r, c]];
   while (queue.length > 0) {
@@ -68,5 +73,3 @@ export function reveal(grid: MineGrid, r: number, c: number): MineGrid {
 export function isWon(grid: MineGrid): boolean {
   return grid.every(row => row.every(c => c.isMine || c.isRevealed));
 }
-
-export { ROWS, COLS };

@@ -3,10 +3,12 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal, Dimensions } from 'rea
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 const SIZE = 10;
@@ -63,18 +65,22 @@ function aiMove(board: Cell[][]): [number, number] {
   return moves[Math.floor(Math.random() * moves.length)] ?? [0, 0];
 }
 
-export function NoughtsCrossesGame({ onComplete, onBack }: Props) {
+export function NoughtsCrossesGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
   const [board, setBoard] = useState<Cell[][]>(() =>
-    Array.from({ length: SIZE }, () => Array(SIZE).fill(null))
+    saved?.board ?? Array.from({ length: SIZE }, () => Array(SIZE).fill(null))
   );
-  const [turn, setTurn] = useState<'X' | 'O'>('X');
+  const [turn, setTurn] = useState<'X' | 'O'>(() => saved?.turn ?? 'X');
   const [winner, setWinner] = useState<'X' | 'O' | null>(null);
   const [done, setDone] = useState(false);
+
+  useSaveGame('noughts-crosses', () => ({ board, turn }), !done, [board, turn], elapsedRef);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 

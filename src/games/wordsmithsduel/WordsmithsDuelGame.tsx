@@ -3,10 +3,12 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 // Wordsmiths Duel: player vs AI - take turns forming words from a shared letter pool
@@ -96,20 +98,24 @@ function getAIWord(pool: string): string | null {
   return valid[0];
 }
 
-export function WordsmithsDuelGame({ onComplete, onBack }: Props) {
+export function WordsmithsDuelGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [pool, setPool] = useState(() => shuffle(LETTER_POOLS[0].split('')).join(''));
-  const [playerWords, setPlayerWords] = useState<string[]>([]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [pool, setPool] = useState<string>(() => saved?.pool ?? shuffle(LETTER_POOLS[0].split('')).join(''));
+  const [playerWords, setPlayerWords] = useState<string[]>(() => saved?.playerWords ?? []);
   const [aiWords, setAiWords] = useState<string[]>([]);
   const [selected, setSelected] = useState<number[]>([]); // indices in pool
   const [error, setError] = useState('');
   const [turn, setTurn] = useState<'player'|'ai'>('player');
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
+
+  useSaveGame('wordsmiths-duel', () => ({ pool, playerWords }), !done, [playerWords], elapsedRef);
   const [aiThinking, setAiThinking] = useState(false);
 
   const s = useMemo(() => makeStyles(colors), [colors]);

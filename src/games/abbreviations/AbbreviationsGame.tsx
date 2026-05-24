@@ -3,28 +3,197 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
-const ABBREVS = [
-  { abbr: 'NASA', full: 'National Aeronautics and Space Administration' },
-  { abbr: 'ASAP', full: 'As Soon As Possible' },
-  { abbr: 'CEO', full: 'Chief Executive Officer' },
-  { abbr: 'DIY', full: 'Do It Yourself' },
-  { abbr: 'FAQ', full: 'Frequently Asked Questions' },
-  { abbr: 'GPS', full: 'Global Positioning System' },
-  { abbr: 'HTML', full: 'HyperText Markup Language' },
-  { abbr: 'IQ', full: 'Intelligence Quotient' },
-  { abbr: 'JPEG', full: 'Joint Photographic Experts Group' },
-  { abbr: 'ATM', full: 'Automated Teller Machine' },
-  { abbr: 'USB', full: 'Universal Serial Bus' },
-  { abbr: 'WiFi', full: 'Wireless Fidelity' },
-  { abbr: 'PDF', full: 'Portable Document Format' },
-  { abbr: 'FBI', full: 'Federal Bureau of Investigation' },
-  { abbr: 'RSVP', full: 'Répondez S\'il Vous Plaît' },
+// Each entry has: the abbreviation, the correct full form, and plausible wrong options
+// Wrong options share same domain or starting word to avoid obviously unrelated choices
+const ABBREVS: { abbr: string; full: string; distractors: string[] }[] = [
+  {
+    abbr: 'NASA',
+    full: 'National Aeronautics and Space Administration',
+    distractors: [
+      'National Aviation and Safety Authority',
+      'North American Space Agency',
+      'National Aerospace and Science Administration',
+    ],
+  },
+  {
+    abbr: 'ASAP',
+    full: 'As Soon As Possible',
+    distractors: [
+      'As Stated And Planned',
+      'Automated System Alert Protocol',
+      'As Safe As Practicable',
+    ],
+  },
+  {
+    abbr: 'CEO',
+    full: 'Chief Executive Officer',
+    distractors: [
+      'Central Executive Operations',
+      'Chief Engagement Officer',
+      'Corporate Executive Oversight',
+    ],
+  },
+  {
+    abbr: 'DIY',
+    full: 'Do It Yourself',
+    distractors: [
+      'Design It Yourself',
+      'Document It Yourself',
+      'Develop It Yourself',
+    ],
+  },
+  {
+    abbr: 'FAQ',
+    full: 'Frequently Asked Questions',
+    distractors: [
+      'Formal Answer Queue',
+      'Frequently Applied Queries',
+      'Full Answer Questionnaire',
+    ],
+  },
+  {
+    abbr: 'GPS',
+    full: 'Global Positioning System',
+    distractors: [
+      'General Proximity Sensor',
+      'Guided Pathway Service',
+      'Geographic Precision Signal',
+    ],
+  },
+  {
+    abbr: 'HTML',
+    full: 'HyperText Markup Language',
+    distractors: [
+      'High-Tech Media Layer',
+      'HyperText Management Layout',
+      'Hyperlinked Text Module Language',
+    ],
+  },
+  {
+    abbr: 'IQ',
+    full: 'Intelligence Quotient',
+    distractors: [
+      'Individual Quality',
+      'Intellectual Query',
+      'Integrated Quota',
+    ],
+  },
+  {
+    abbr: 'JPEG',
+    full: 'Joint Photographic Experts Group',
+    distractors: [
+      'Joint Picture Encoding Group',
+      'Joint Photographic Encoding Guidelines',
+      'Java Picture Experts Group',
+    ],
+  },
+  {
+    abbr: 'ATM',
+    full: 'Automated Teller Machine',
+    distractors: [
+      'Automatic Transaction Module',
+      'Advanced Teller Management',
+      'Authenticated Terminal Machine',
+    ],
+  },
+  {
+    abbr: 'USB',
+    full: 'Universal Serial Bus',
+    distractors: [
+      'Universal Signal Bridge',
+      'Unified Storage Board',
+      'Ultra Speed Bus',
+    ],
+  },
+  {
+    abbr: 'WiFi',
+    full: 'Wireless Fidelity',
+    distractors: [
+      'Wide-band Frequency Interface',
+      'Wireless File Integration',
+      'Wide Fidelity',
+    ],
+  },
+  {
+    abbr: 'PDF',
+    full: 'Portable Document Format',
+    distractors: [
+      'Printable Data File',
+      'Portable Data Framework',
+      'Processed Document File',
+    ],
+  },
+  {
+    abbr: 'FBI',
+    full: 'Federal Bureau of Investigation',
+    distractors: [
+      'Federal Board of Intelligence',
+      'Federal Bureau of Information',
+      'Field Bureau of Investigation',
+    ],
+  },
+  {
+    abbr: 'VPN',
+    full: 'Virtual Private Network',
+    distractors: [
+      'Virtual Protocol Node',
+      'Verified Private Network',
+      'Virtual Packet Network',
+    ],
+  },
+  {
+    abbr: 'RAM',
+    full: 'Random Access Memory',
+    distractors: [
+      'Read-only Access Module',
+      'Rapid Application Memory',
+      'Random Allocation Module',
+    ],
+  },
+  {
+    abbr: 'CPU',
+    full: 'Central Processing Unit',
+    distractors: [
+      'Core Processing Utility',
+      'Central Program Unit',
+      'Compute Processing Unit',
+    ],
+  },
+  {
+    abbr: 'URL',
+    full: 'Uniform Resource Locator',
+    distractors: [
+      'Universal Resource Link',
+      'Uniform Route Locator',
+      'User Resource Locator',
+    ],
+  },
+  {
+    abbr: 'API',
+    full: 'Application Programming Interface',
+    distractors: [
+      'Application Protocol Integration',
+      'Advanced Programming Interface',
+      'Automated Process Interface',
+    ],
+  },
+  {
+    abbr: 'PIN',
+    full: 'Personal Identification Number',
+    distractors: [
+      'Private Input Number',
+      'Personal Information Note',
+      'Protected Identity Number',
+    ],
+  },
 ];
 
 function shuffle<T>(arr: T[]): T[] {
@@ -36,18 +205,22 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-export function AbbreviationsGame({ onComplete, onBack }: Props) {
+export function AbbreviationsGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [questions] = useState(() => shuffle([...ABBREVS]).slice(0, 10));
-  const [round, setRound] = useState(0);
-  const [score, setScore] = useState(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [questions] = useState<typeof ABBREVS>(() => saved?.questions ?? shuffle([...ABBREVS]).slice(0, 10));
+  const [round, setRound] = useState<number>(() => saved?.round ?? 0);
+  const [score, setScore] = useState<number>(() => saved?.score ?? 0);
   const [selected, setSelected] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
+
+  useSaveGame('abbreviations', () => ({ questions, round, score }), !done, [round, score], elapsedRef);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 
@@ -68,9 +241,8 @@ export function AbbreviationsGame({ onComplete, onBack }: Props) {
   const current = questions[round];
   const choices = useMemo(() => {
     if (!current) return [];
-    const others = ABBREVS.filter(a => a.abbr !== current.abbr);
-    const wrong = shuffle(others).slice(0, 3);
-    return shuffle([current, ...wrong]);
+    const wrong = shuffle([...current.distractors]).slice(0, 3);
+    return shuffle([current.full, ...wrong]);
   }, [current, round]);
 
   const handleChoice = useCallback((full: string) => {
@@ -103,16 +275,16 @@ export function AbbreviationsGame({ onComplete, onBack }: Props) {
         {choices.map(v => {
           let bg = colors.surface;
           let border = colors.divider;
-          if (selected === v.full) {
-            bg = v.full === current.full ? colors.number.bg : '#FFE0E0';
-            border = v.full === current.full ? colors.number.ink : colors.danger;
-          } else if (selected !== null && v.full === current.full) {
+          if (selected === v) {
+            bg = v === current.full ? colors.number.bg : '#FFE0E0';
+            border = v === current.full ? colors.number.ink : colors.danger;
+          } else if (selected !== null && v === current.full) {
             bg = colors.number.bg;
             border = colors.number.ink;
           }
           return (
-            <TouchableOpacity key={v.abbr} style={[s.choice, { backgroundColor: bg, borderColor: border }]} onPress={() => handleChoice(v.full)} activeOpacity={0.8}>
-              <Text style={s.choiceText} numberOfLines={2}>{v.full}</Text>
+            <TouchableOpacity key={v} style={[s.choice, { backgroundColor: bg, borderColor: border }]} onPress={() => handleChoice(v)} activeOpacity={0.8}>
+              <Text style={s.choiceText} numberOfLines={2}>{v}</Text>
             </TouchableOpacity>
           );
         })}

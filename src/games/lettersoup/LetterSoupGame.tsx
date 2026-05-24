@@ -3,10 +3,12 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView } from 'rea
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 const LETTER_SETS = [
@@ -16,21 +18,25 @@ const LETTER_SETS = [
 
 const VALID = new Set(['rant','snap','plan','star','raps','slap','earn','pals','tars','laps','rats','naps','span','near','lean','pans','rants','plans','earns','snaps','slaps','pants','leans','slant','plant','plants','planet','bored','board','bore','bark','bare','biker','bike','dorm','drab','idea','made','mike','mired','roam','robe','rode','road']);
 
-export function LetterSoupGame({ onComplete, onBack }: Props) {
+export function LetterSoupGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef<boolean>(false);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const [setIdx] = useState(() => Math.floor(Math.random() * LETTER_SETS.length));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [setIdx] = useState<number>(() => saved?.setIdx ?? Math.floor(Math.random() * LETTER_SETS.length));
   const letterSet = LETTER_SETS[setIdx];
   const [selected, setSelected] = useState<number[]>([]);
-  const [found, setFound] = useState<string[]>([]);
+  const [found, setFound] = useState<string[]>(() => saved?.found ?? []);
   const [score, setScore] = useState(0);
   const [timeLeft, setTimeLeft] = useState(90);
   const [done, setDone] = useState(false);
   const [message, setMessage] = useState('');
+
+  useSaveGame('letter-soup', () => ({ setIdx, found }), !done, [setIdx, found], elapsedRef);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 

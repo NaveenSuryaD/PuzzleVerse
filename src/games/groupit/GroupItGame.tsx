@@ -27,6 +27,7 @@ import { useTheme, type ThemeColors } from '../../theme/useTheme';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { fonts } from '../../theme/typography';
 import { playSound } from '../../audio/sounds';
+import { useSaveGame } from '../../utils/gameSave';
 import { getDailyPuzzle, getRandomPuzzle } from './puzzles';
 import type { Puzzle, PuzzleGroup, GameStatus, Tier } from './types';
 
@@ -159,6 +160,7 @@ const FlipTile: React.FC<FlipTileProps> = ({
             color: textCol,
             letterSpacing: 0.3,
             textAlign: 'center',
+            includeFontPadding: false,
           }}
           numberOfLines={1}
           adjustsFontSizeToFit
@@ -175,24 +177,27 @@ const FlipTile: React.FC<FlipTileProps> = ({
 interface GroupItGameProps {
   onComplete?: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
-export const GroupItGame: React.FC<GroupItGameProps> = ({ onComplete, onBack }) => {
+export const GroupItGame: React.FC<GroupItGameProps> = ({ onComplete, onBack, savedStateJSON }) => {
   const colors = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
   const tierColors = useMemo(() => TIER_COLORS(colors), [colors]);
   const hapticsEnabled = useSettingsStore(st => st.hapticsEnabled);
   const reducedMotion = useSettingsStore(st => st.reducedMotion);
 
-  const [puzzle, setPuzzle] = useState<Puzzle>(() => getDailyPuzzle());
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [puzzle, setPuzzle] = useState<Puzzle>(() => saved?.puzzle ?? getDailyPuzzle());
   const [displayWords, setDisplayWords] = useState<string[]>(() =>
     shuffle(puzzle.groups.flatMap(g => [...g.words]))
   );
   const [selectedWords, setSelectedWords] = useState<string[]>([]);
-  const [foundGroups, setFoundGroups] = useState<PuzzleGroup[]>([]);
+  const [foundGroups, setFoundGroups] = useState<PuzzleGroup[]>(() => saved?.foundGroups ?? []);
   const [pendingGroup, setPendingGroup] = useState<PuzzleGroup | null>(null);
-  const [mistakes, setMistakes] = useState(0);
-  const [gameStatus, setGameStatus] = useState<GameStatus>('playing');
+  const [mistakes, setMistakes] = useState<number>(() => saved?.mistakes ?? 0);
+  const [gameStatus, setGameStatus] = useState<GameStatus>(() => (saved?.gameStatus ?? 'playing') as GameStatus);
   const [oneAway, setOneAway] = useState(false);
   const [showComplete, setShowComplete] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -201,6 +206,8 @@ export const GroupItGame: React.FC<GroupItGameProps> = ({ onComplete, onBack }) 
 
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useSaveGame('group-it', () => ({ puzzle, foundGroups, mistakes, gameStatus }), gameStatus === 'playing', [foundGroups, mistakes], elapsedRef);
 
   // Shake animation for wrong guess
   const shakeX = useSharedValue(0);

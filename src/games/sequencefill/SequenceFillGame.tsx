@@ -7,6 +7,7 @@ import { fonts } from '../../theme/typography';
 import { generateSequences } from './generator';
 import type { SequencePuzzle } from './types';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const PAD_KEYS = ['7','8','9','4','5','6','1','2','3','⌫','0','✓'];
@@ -14,23 +15,28 @@ const PAD_KEYS = ['7','8','9','4','5','6','1','2','3','⌫','0','✓'];
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
-export function SequenceFillGame({ onComplete, onBack }: Props) {
+export function SequenceFillGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
 
-  const [puzzles, setPuzzles] = useState(() => generateSequences(8));
-  const [pIdx, setPIdx] = useState(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [puzzles, setPuzzles] = useState<SequencePuzzle[]>(() => saved?.puzzles ?? generateSequences(8));
+  const [pIdx, setPIdx] = useState<number>(() => saved?.pIdx ?? 0);
   const [bIdx, setBIdx] = useState(0); // which blank we're filling
   const [input, setInput] = useState('');
   const [flash, setFlash] = useState<'correct' | 'wrong' | null>(null);
-  const [solved, setSolved] = useState<boolean[]>(Array(8).fill(false));
+  const [solved, setSolved] = useState<boolean[]>(() => saved?.solved ?? Array(8).fill(false));
   const [done, setDone] = useState(false);
 
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
+
+  useSaveGame('sequence-fill', () => ({ puzzles, pIdx, solved }), !done, [pIdx, solved], elapsedRef);
 
   useEffect(() => {
     timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);

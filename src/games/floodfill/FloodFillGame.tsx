@@ -3,10 +3,12 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal, Dimensions } from 'rea
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 const GRID_SIZE = 6;
@@ -48,17 +50,20 @@ function isSolved(grid: number[][]): boolean {
   return grid.every(row => row.every(c => c === color));
 }
 
-export function FloodFillGame({ onComplete, onBack }: Props) {
+export function FloodFillGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [grid, setGrid] = useState(generateGrid);
-  const [moves, setMoves] = useState(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [grid, setGrid] = useState<number[][]>(() => saved?.grid ?? generateGrid());
+  const [moves, setMoves] = useState<number>(() => saved?.moves ?? 0);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
 
+  useSaveGame('flood-fill', () => ({ grid, moves }), !done, [grid], elapsedRef);
   const s = useMemo(() => makeStyles(colors), [colors]);
 
   useEffect(() => {

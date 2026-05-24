@@ -10,12 +10,14 @@ import { initGame, move } from './generator';
 import type { GameState, Grid } from './types';
 import * as Haptics from 'expo-haptics';
 import { useSettingsStore } from '../../store/useSettingsStore';
+import { useSaveGame } from '../../utils/gameSave';
 
 const BEST_SCORE_KEY = '2048-best-score';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -36,20 +38,24 @@ const TILE_COLORS: Record<number, { bg: string; ink: string }> = {
   2048: { bg: '#EDC22E', ink: '#FFFFFF' },
 };
 
-export function Game2048Game({ onComplete, onBack }: Props) {
+export function Game2048Game({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const hapticsEnabled = useSettingsStore(st => st.hapticsEnabled);
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [gameState, setGameState] = useState<GameState>(initGame);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [gameState, setGameState] = useState<GameState>(() => saved?.gameState ?? initGame());
+  const [undoStack, setUndoStack] = useState<GameState[]>([]);
   const [done, setDone] = useState(false);
   const [bestScore, setBestScore] = useState(0);
 
+  useSaveGame('game-2048', () => ({ gameState }), !done && !gameState.over, [gameState], elapsedRef);
+
   const prevGridRef = useRef<Grid>(gameState.grid);
 
-  // 16 scale animations — one per cell (row-major)
   const cellScales = useRef(
     Array.from({ length: 16 }, () => new Animated.Value(1)),
   );
@@ -77,6 +83,7 @@ export function Game2048Game({ onComplete, onBack }: Props) {
     }
   }, [gameState.score, bestScore]);
 
+
   // Animate new tile pop-in and merged tile scale
   useEffect(() => {
     const prev = prevGridRef.current;
@@ -89,17 +96,12 @@ export function Game2048Game({ onComplete, onBack }: Props) {
         const currVal = curr[r][c];
 
         if (!prevVal && currVal) {
-          // New tile pop-in
           const anim = cellScales.current[idx];
           anim.setValue(0);
           Animated.spring(anim, {
-            toValue: 1,
-            useNativeDriver: true,
-            tension: 200,
-            friction: 8,
+            toValue: 1, useNativeDriver: true, tension: 200, friction: 8,
           }).start();
         } else if (prevVal && currVal && currVal > prevVal) {
-          // Merged tile scale pulse
           const anim = cellScales.current[idx];
           Animated.sequence([
             Animated.timing(anim, { toValue: 1.18, duration: 80, useNativeDriver: true }),
@@ -125,23 +127,55 @@ export function Game2048Game({ onComplete, onBack }: Props) {
     else if (gameState.over) finish(false);
   }, [gameState.won, gameState.over, finish]);
 
-  const handleMove = useCallback((dir: 'left' | 'right' | 'up' | 'down') => {
+  // Ref-based move handler to avoid stale closures in PanResponder
+  const handleMoveRef = useRef<(dir: 'left' | 'right' | 'up' | 'down') => void>(() => {});
+  handleMoveRef.current = (dir: 'left' | 'right' | 'up' | 'down') => {
     if (hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setGameState(prev => move(prev, dir));
-  }, [hapticsEnabled]);
+    setGameState(prev => {
+      setUndoStack(stack => [...stack.slice(-4), prev]);
+      return move(prev, dir);
+    });
+  };
 
-  const panResponder = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onPanResponderRelease: (_, gs) => {
-      const { dx, dy } = gs;
-      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
-      if (Math.abs(dx) > Math.abs(dy)) {
-        handleMove(dx > 0 ? 'right' : 'left');
-      } else {
-        handleMove(dy > 0 ? 'down' : 'up');
-      }
-    },
-  }), [handleMove]);
+  // PanResponder created once — uses ref to always have latest handler
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gs) => {
+        return Math.abs(gs.dx) > 8 || Math.abs(gs.dy) > 8;
+      },
+      onPanResponderRelease: (_, gs) => {
+        const { dx, dy } = gs;
+        if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+        if (Math.abs(dx) > Math.abs(dy)) {
+          handleMoveRef.current(dx > 0 ? 'right' : 'left');
+        } else {
+          handleMoveRef.current(dy > 0 ? 'down' : 'up');
+        }
+      },
+    })
+  ).current;
+
+  const handleUndo = useCallback(() => {
+    if (undoStack.length === 0) return;
+    if (hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const prev = undoStack[undoStack.length - 1];
+    setUndoStack(stack => stack.slice(0, -1));
+    setGameState(prev);
+  }, [undoStack, hapticsEnabled]);
+
+  const handleNewGame = useCallback(() => {
+    const newState = initGame();
+    prevGridRef.current = newState.grid;
+    cellScales.current.forEach(a => a.setValue(1));
+    setGameState(newState);
+    setUndoStack([]);
+    setDone(false);
+    completedRef.current = false;
+    elapsedRef.current = 0;
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+  }, []);
+
 
   return (
     <View style={s.container}>
@@ -157,7 +191,8 @@ export function Game2048Game({ onComplete, onBack }: Props) {
         </View>
       </View>
 
-      <View {...panResponder.panHandlers} style={s.gridWrapper}>
+
+<View {...panResponder.panHandlers} style={s.gridWrapper}>
         <View style={s.grid}>
           {gameState.grid.map((row, ri) =>
             row.map((val, ci) => {
@@ -189,6 +224,21 @@ export function Game2048Game({ onComplete, onBack }: Props) {
 
       <Text style={s.hint}>Swipe to move tiles · Merge to reach 2048</Text>
 
+      {/* Controls row */}
+      <View style={s.controlsRow}>
+        <TouchableOpacity
+          style={[s.controlBtn, undoStack.length === 0 && s.controlBtnDisabled]}
+          onPress={handleUndo}
+          disabled={undoStack.length === 0}
+          activeOpacity={0.8}
+        >
+          <Text style={[s.controlBtnText, undoStack.length === 0 && { color: colors.inkMuted }]}>Undo</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={s.controlBtn} onPress={handleNewGame} activeOpacity={0.8}>
+          <Text style={s.controlBtnText}>New Game</Text>
+        </TouchableOpacity>
+      </View>
+
       <Modal visible={done} transparent animationType="fade">
         <View style={s.overlay}>
           <View style={s.modal}>
@@ -196,7 +246,7 @@ export function Game2048Game({ onComplete, onBack }: Props) {
             <Text style={s.modalTitle}>{gameState.won ? 'You reached 2048!' : 'Game Over'}</Text>
             <Text style={s.modalSub}>Score: {gameState.score}</Text>
             {gameState.score >= bestScore && gameState.score > 0 && (
-              <Text style={[s.bestLabel, { color: colors.logic.ink }]}>New best score! 🏆</Text>
+              <Text style={[s.bestLabel, { color: colors.logic.ink }]}>New best score!</Text>
             )}
             {onBack && (
               <TouchableOpacity
@@ -206,18 +256,7 @@ export function Game2048Game({ onComplete, onBack }: Props) {
                 <Text style={[s.modalBtnText, { color: colors.inkSoft }]}>Go Back</Text>
               </TouchableOpacity>
             )}
-            <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false);
-              completedRef.current = false;
-              const newState = initGame();
-              prevGridRef.current = newState.grid;
-              // Reset cell scales
-              cellScales.current.forEach(a => a.setValue(1));
-              setGameState(newState);
-              elapsedRef.current = 0;
-              if (timerRef.current) clearInterval(timerRef.current);
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-            }}>
+            <TouchableOpacity style={s.modalBtn} onPress={handleNewGame}>
               <Text style={s.modalBtnText}>Play Again</Text>
             </TouchableOpacity>
           </View>
@@ -229,7 +268,7 @@ export function Game2048Game({ onComplete, onBack }: Props) {
 
 const makeStyles = (colors: ReturnType<typeof useTheme>) => StyleSheet.create({
   container: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
-  scoreBar: { flexDirection: 'row', gap: 12, marginBottom: 20 },
+  scoreBar: { flexDirection: 'row', gap: 12, marginBottom: 16 },
   scoreBox: {
     alignItems: 'center',
     backgroundColor: colors.surface,
@@ -240,7 +279,7 @@ const makeStyles = (colors: ReturnType<typeof useTheme>) => StyleSheet.create({
   },
   scoreLabel: { fontFamily: fonts.bold, fontSize: 12, color: colors.inkMuted, letterSpacing: 1 },
   scoreVal: { fontFamily: fonts.black, fontSize: 26, color: colors.ink },
-  gridWrapper: { borderRadius: 12, overflow: 'hidden' },
+gridWrapper: { borderRadius: 12, overflow: 'hidden' },
   grid: {
     width: GRID_SIZE, height: GRID_SIZE,
     backgroundColor: '#BBADA0',
@@ -252,9 +291,20 @@ const makeStyles = (colors: ReturnType<typeof useTheme>) => StyleSheet.create({
     borderRadius: 8, alignItems: 'center', justifyContent: 'center',
   },
   emptyCell: { backgroundColor: 'rgba(238,228,218,0.35)' },
-  cellVal: { fontFamily: fonts.black },
-  hint: { fontFamily: fonts.semiBold, fontSize: 13, color: colors.inkMuted, marginTop: 16, textAlign: 'center' },
-  bestLabel: { fontFamily: fonts.bold, fontSize: 13, marginBottom: 8 },
+  cellVal: { fontFamily: fonts.black, color: colors.ink },
+  hint: { fontFamily: fonts.semiBold, fontSize: 13, color: colors.inkMuted, marginTop: 12, textAlign: 'center' },
+  controlsRow: { flexDirection: 'row', gap: 10, marginTop: 12 },
+  controlBtn: {
+    backgroundColor: colors.surface,
+    borderWidth: 1.5,
+    borderColor: colors.divider,
+    paddingHorizontal: 20,
+    paddingVertical: 9,
+    borderRadius: 999,
+  },
+  controlBtnDisabled: { opacity: 0.4 },
+  controlBtnText: { fontFamily: fonts.bold, fontSize: 14, color: colors.inkSoft },
+  bestLabel: { fontFamily: fonts.bold, fontSize: 13, marginBottom: 4, color: colors.ink },
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' },
   modal: { backgroundColor: colors.surface, borderRadius: 24, padding: 32, alignItems: 'center', width: 300, gap: 4 },
   modalEmoji: { fontSize: 52, marginBottom: 8 },

@@ -3,10 +3,12 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal, TextInput, ScrollView 
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 // Acrostic: guess words where the first letters spell a hidden word
@@ -44,20 +46,23 @@ const PUZZLES = [
   },
 ];
 
-export function AcrosticGame({ onComplete, onBack }: Props) {
+export function AcrosticGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [puzIdx, setPuzIdx] = useState(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [puzIdx, setPuzIdx] = useState<number>(() => saved?.puzIdx ?? 0);
   const puz = PUZZLES[puzIdx];
 
-  const [answers, setAnswers] = useState<string[]>(puz.clues.map(() => ''));
+  const [answers, setAnswers] = useState<string[]>(() => saved?.answers ?? puz.clues.map(() => ''));
   const [revealed, setRevealed] = useState<boolean[]>(puz.clues.map(() => false));
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
 
+  useSaveGame('acrostic', () => ({ puzIdx, answers }), !done, [puzIdx, answers], elapsedRef);
   const s = useMemo(() => makeStyles(colors), [colors]);
 
   useEffect(() => {

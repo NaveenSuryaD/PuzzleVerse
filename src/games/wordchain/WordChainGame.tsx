@@ -3,10 +3,12 @@ import { View, Text, StyleSheet, TouchableOpacity, TextInput, Modal, ScrollView 
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 const VALID_WORDS = new Set([
@@ -24,20 +26,26 @@ const VALID_WORDS = new Set([
 
 const STARTER_WORDS = ['apple','train','night','eagle','polar','tower','steam'];
 
-export function WordChainGame({ onComplete, onBack }: Props) {
+export function WordChainGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
   const [timeLeft, setTimeLeft] = useState(60);
   const [words, setWords] = useState<string[]>(() => {
+    if (saved?.words?.length) return saved.words;
     const starter = STARTER_WORDS[Math.floor(Math.random() * STARTER_WORDS.length)];
     return [starter];
   });
+  const wordsRef = useRef<string[]>([]);
   const [input, setInput] = useState('');
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
+
+  useSaveGame('word-chain', () => ({ words }), !done, [words], elapsedRef);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 
@@ -46,7 +54,7 @@ export function WordChainGame({ onComplete, onBack }: Props) {
       setTimeLeft(t => {
         if (t <= 1) {
           clearInterval(countdown);
-          finish(words.length > 1);
+          finish(wordsRef.current.length > 1);
           return 0;
         }
         return t - 1;
@@ -67,6 +75,7 @@ export function WordChainGame({ onComplete, onBack }: Props) {
     onComplete(w, elapsedRef.current);
   }, [onComplete]);
 
+  wordsRef.current = words;
   const lastWord = words[words.length - 1];
   const requiredStart = lastWord[lastWord.length - 1].toUpperCase();
 
@@ -140,7 +149,7 @@ export function WordChainGame({ onComplete, onBack }: Props) {
               setWords([starter]); setInput(''); setError('');
               setTimeLeft(60); elapsedRef.current = 0;
               const countdown = setInterval(() => {
-                setTimeLeft(t => { if (t <= 1) { clearInterval(countdown); finish(words.length > 1); return 0; } return t - 1; });
+                setTimeLeft(t => { if (t <= 1) { clearInterval(countdown); finish(wordsRef.current.length > 1); return 0; } return t - 1; });
               }, 1000);
               timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
             }}>

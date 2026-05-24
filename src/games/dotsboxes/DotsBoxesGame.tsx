@@ -3,10 +3,12 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 const N = 4; // 4x4 grid of dots = 4x4 boxes = NxN boxes, N+1 dots per side
@@ -82,15 +84,18 @@ function aiMove(state: GameState): { type: 'h' | 'v'; r: number; c: number } {
   return moves[Math.floor(Math.random() * moves.length)] ?? { type: 'h', r: 0, c: 0 };
 }
 
-export function DotsBoxesGame({ onComplete, onBack }: Props) {
+export function DotsBoxesGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [state, setState] = useState<GameState>(initState);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [state, setState] = useState<GameState>(() => saved?.state ?? initState());
   const [done, setDone] = useState(false);
 
+  useSaveGame('dots-boxes', () => ({ state }), !done, [state], elapsedRef);
   const s = useMemo(() => makeStyles(colors), [colors]);
 
   useEffect(() => {

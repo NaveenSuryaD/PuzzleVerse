@@ -3,10 +3,12 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView } from 'rea
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 // Typeshift: columns of letters, slide each column up/down to form words
@@ -37,20 +39,23 @@ const PUZZLES = [
   },
 ];
 
-export function TypeshiftGame({ onComplete, onBack }: Props) {
+export function TypeshiftGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [puzIdx, setPuzIdx] = useState(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [puzIdx, setPuzIdx] = useState<number>(() => saved?.puzIdx ?? 0);
   const puz = PUZZLES[puzIdx];
 
-  const [positions, setPositions] = useState(puz.startPositions.slice());
-  const [foundWords, setFoundWords] = useState<Set<string>>(new Set());
+  const [positions, setPositions] = useState<number[]>(() => saved?.positions ?? puz.startPositions.slice());
+  const [foundWords, setFoundWords] = useState<Set<string>>(() => new Set(saved?.foundWords ?? []));
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
 
+  useSaveGame('typeshift', () => ({ puzIdx, positions, foundWords: [...foundWords] }), !done, [puzIdx, positions, foundWords], elapsedRef);
   const s = useMemo(() => makeStyles(colors), [colors]);
 
   useEffect(() => {

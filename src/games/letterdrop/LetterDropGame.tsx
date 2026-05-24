@@ -3,10 +3,12 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 // Letter Drop: columns of letters fall down; arrange them to form words
@@ -36,20 +38,24 @@ const PUZZLES = [
   },
 ];
 
-export function LetterDropGame({ onComplete, onBack }: Props) {
+export function LetterDropGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [puzIdx, setPuzIdx] = useState(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [puzIdx, setPuzIdx] = useState<number>(() => saved?.puzIdx ?? 0);
   const puz = PUZZLES[puzIdx];
 
   // Current position in each column (which letter is "active")
-  const [positions, setPositions] = useState(puz.cols.map(() => 0));
-  const [formed, setFormed] = useState<string[]>([]);
+  const [positions, setPositions] = useState<number[]>(() => saved?.positions ?? puz.cols.map(() => 0));
+  const [formed, setFormed] = useState<string[]>(() => saved?.formed ?? []);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
+
+  useSaveGame('letter-drop', () => ({ puzIdx, positions, formed }), !done, [puzIdx, positions, formed], elapsedRef);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 

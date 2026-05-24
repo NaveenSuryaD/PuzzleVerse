@@ -3,10 +3,12 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal, TextInput } from 'reac
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 // Last Letter: chain words where each word starts with the last letter of the previous
@@ -45,20 +47,23 @@ const WORD_LIST = new Set([
   'ZAP','ZED','ZEN','ZIT','ZOO',
 ]);
 
-export function LastLetterGame({ onComplete, onBack }: Props) {
+export function LastLetterGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [starterIdx] = useState(() => Math.floor(Math.random() * STARTER_WORDS.length));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [starterIdx] = useState<number>(() => saved?.starterIdx ?? Math.floor(Math.random() * STARTER_WORDS.length));
   const starter = STARTER_WORDS[starterIdx];
-  const [chain, setChain] = useState<string[]>([starter]);
+  const [chain, setChain] = useState<string[]>(() => saved?.chain ?? [starter]);
   const [input, setInput] = useState('');
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
 
+  useSaveGame('last-letter', () => ({ starterIdx, chain }), !done, [chain], elapsedRef);
   const s = useMemo(() => makeStyles(colors), [colors]);
 
   useEffect(() => {

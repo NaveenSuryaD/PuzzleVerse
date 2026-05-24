@@ -3,10 +3,12 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal, TextInput } from 'reac
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 // Word Morph: change one letter at a time to reach the target word
@@ -58,21 +60,24 @@ function isOneLetterChange(a: string, b: string): boolean {
   return diff === 1;
 }
 
-export function WordMorphGame({ onComplete, onBack }: Props) {
+export function WordMorphGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [puzIdx, setPuzIdx] = useState(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [puzIdx, setPuzIdx] = useState<number>(() => saved?.puzIdx ?? 0);
   const puz = PUZZLES[puzIdx];
 
-  const [chain, setChain] = useState<string[]>([puz.start]);
+  const [chain, setChain] = useState<string[]>(() => saved?.chain ?? [puz.start]);
   const [input, setInput] = useState('');
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
 
+  useSaveGame('word-morph', () => ({ puzIdx, chain }), !done, [puzIdx, chain], elapsedRef);
   const s = useMemo(() => makeStyles(colors), [colors]);
 
   useEffect(() => {

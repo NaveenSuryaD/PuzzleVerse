@@ -337,7 +337,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   streakPillText: { fontFamily: fonts.extraBold, fontSize: 12, color: colors.word.ink },
   heatmapRow: {
     flexDirection: 'row', flexWrap: 'nowrap',
-    gap: 3, justifyContent: 'space-between',
+    justifyContent: 'space-between',
   },
   heatCell: { aspectRatio: 1 },
   heatmapLegend: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 },

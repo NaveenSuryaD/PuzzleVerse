@@ -3,10 +3,12 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 // Masyu: draw a loop through all circles
@@ -40,7 +42,7 @@ const PUZZLES = [
 
 const CELL = 60;
 
-export function MasyuGame({ onComplete, onBack }: Props) {
+export function MasyuGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -50,9 +52,13 @@ export function MasyuGame({ onComplete, onBack }: Props) {
   const SIZE = puz.size;
 
   // Edges: "r1,c1-r2,c2" where r1<=r2 (or c1<=c2 if same row)
-  const [edges, setEdges] = useState<Set<string>>(new Set());
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [edges, setEdges] = useState<Set<string>>(() => new Set(saved?.edges ?? []));
   const [lastNode, setLastNode] = useState<[number,number] | null>(null);
   const [done, setDone] = useState(false);
+
+  useSaveGame('masyu', () => ({ edges: [...edges] }), !done, [edges], elapsedRef);
   const [won, setWon] = useState(false);
 
   const s = useMemo(() => makeStyles(colors), [colors]);

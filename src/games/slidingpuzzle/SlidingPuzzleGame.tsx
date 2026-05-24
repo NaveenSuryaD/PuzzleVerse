@@ -3,26 +3,37 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal, Dimensions } from 'rea
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { solvedGrid, shuffle, isSolved, findEmpty } from './generator';
+import type { TileGrid } from './types';
+import { useProgressStore } from '../../store/useProgressStore';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const GRID_SIZE = Math.min(SCREEN_W - 48, 320);
 const CELL = GRID_SIZE / 4;
 
-export function SlidingPuzzleGame({ onComplete, onBack }: Props) {
+export function SlidingPuzzleGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
+  const { levels, setGameLevel } = useProgressStore();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [grid, setGrid] = useState(() => shuffle(solvedGrid()));
-  const [moves, setMoves] = useState(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [level, setLevel] = useState(() => levels['sliding-puzzle'] ?? 1);
+  const shuffleMoves = Math.min(50 + (level - 1) * 75, 300);
+  const [grid, setGrid] = useState<TileGrid>(() => saved?.grid ?? shuffle(solvedGrid(), shuffleMoves));
+  const [moves, setMoves] = useState<number>(() => saved?.moves ?? 0);
   const [done, setDone] = useState(false);
+
+  useSaveGame('sliding-puzzle', () => ({ grid, moves }), !done, [grid], elapsedRef);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 
@@ -57,7 +68,12 @@ export function SlidingPuzzleGame({ onComplete, onBack }: Props) {
 
   return (
     <View style={s.container}>
-      <Text style={s.title}>Sliding Puzzle</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+        <Text style={s.title}>Sliding Puzzle</Text>
+        <View style={[s.levelBadge, { backgroundColor: colors.visual.bg }]}>
+          <Text style={[s.levelText, { color: colors.visual.ink }]}>Level {level}</Text>
+        </View>
+      </View>
       <Text style={s.subtitle}>Arrange 1–15 in order · Moves: {moves}</Text>
 
       <View style={[s.grid, { width: GRID_SIZE, height: GRID_SIZE }]}>
@@ -83,7 +99,7 @@ export function SlidingPuzzleGame({ onComplete, onBack }: Props) {
       </View>
 
       <TouchableOpacity style={s.resetBtn} onPress={() => {
-        setGrid(shuffle(solvedGrid()));
+        setGrid(shuffle(solvedGrid(), shuffleMoves));
         setMoves(0);
       }} activeOpacity={0.8}>
         <Text style={s.resetBtnText}>Shuffle</Text>
@@ -94,7 +110,7 @@ export function SlidingPuzzleGame({ onComplete, onBack }: Props) {
           <View style={s.modal}>
             <Text style={s.modalEmoji}>🎉</Text>
             <Text style={s.modalTitle}>Solved!</Text>
-            <Text style={s.modalSub}>Moves: {moves}</Text>
+            <Text style={s.modalSub}>Level {level} · {moves} moves</Text>
             {onBack && (
               <TouchableOpacity
                 style={[s.modalBtn, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: colors.rule, marginTop: 8 }]}
@@ -104,14 +120,18 @@ export function SlidingPuzzleGame({ onComplete, onBack }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
+              const nextLevel = level + 1;
+              const nextShuffleMoves = Math.min(50 + (nextLevel - 1) * 75, 300);
               setDone(false);
               completedRef.current = false;
-              setGrid(shuffle(solvedGrid()));
+              setLevel(nextLevel);
+              setGameLevel('sliding-puzzle', nextLevel);
+              setGrid(shuffle(solvedGrid(), nextShuffleMoves));
               setMoves(0);
               elapsedRef.current = 0;
               timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
             }}>
-              <Text style={s.modalBtnText}>Play Again</Text>
+              <Text style={s.modalBtnText}>Next Level</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -122,7 +142,9 @@ export function SlidingPuzzleGame({ onComplete, onBack }: Props) {
 
 const makeStyles = (colors: ReturnType<typeof useTheme>) => StyleSheet.create({
   container: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
-  title: { fontFamily: fonts.black, fontSize: 22, color: colors.ink, marginBottom: 4 },
+  title: { fontFamily: fonts.black, fontSize: 22, color: colors.ink },
+  levelBadge: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999 },
+  levelText: { fontFamily: fonts.extraBold, fontSize: 13 },
   subtitle: { fontFamily: fonts.semiBold, fontSize: 13, color: colors.inkMuted, marginBottom: 24 },
   grid: { position: 'relative', backgroundColor: colors.surface2, borderRadius: 12, marginBottom: 24 },
   tile: { position: 'absolute', borderRadius: 10, alignItems: 'center', justifyContent: 'center' },

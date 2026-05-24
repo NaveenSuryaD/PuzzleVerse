@@ -9,6 +9,7 @@ import { getRandomWord } from './wordbank';
 import type { GameStatus, LetterStatus } from './types';
 import * as Haptics from 'expo-haptics';
 import { playSound } from '../../audio/sounds';
+import { useSaveGame } from '../../utils/gameSave';
 
 const MAX_WRONG = 6;
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -24,6 +25,7 @@ const ROWS = [
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 function HangmanDrawing({ wrongCount, colors }: { wrongCount: number; colors: ThemeColors }) {
@@ -82,18 +84,22 @@ const draw = StyleSheet.create({
   bar: { position: 'absolute', borderRadius: 3 },
 });
 
-export function HangmanGame({ onComplete, onBack }: Props) {
+export function HangmanGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
   const isDark = colors.bg === '#16110A';
 
-  const [word, setWord] = useState(getRandomWord);
-  const [guessed, setGuessed] = useState<Set<string>>(new Set());
-  const [gameStatus, setGameStatus] = useState<GameStatus>('playing');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [word, setWord] = useState<string>(() => saved?.word ?? getRandomWord());
+  const [guessed, setGuessed] = useState<Set<string>>(() => new Set(saved?.guessed ?? []));
+  const [gameStatus, setGameStatus] = useState<GameStatus>(() => saved?.gameStatus ?? 'playing');
 
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
+
+  useSaveGame('hangman', () => ({ word, guessed: [...guessed], gameStatus }), gameStatus === 'playing', [word, guessed], elapsedRef);
 
   const startTimer = useCallback(() => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -205,6 +211,18 @@ export function HangmanGame({ onComplete, onBack }: Props) {
       {/* Wrong letters strip */}
       <Text style={s.wrongLetters}>{wrongLetters || ' '}</Text>
 
+      {/* Letter frequency hint */}
+      {gameStatus === 'playing' && (
+        <View style={s.freqRow}>
+          <Text style={s.freqLabel}>Try: </Text>
+          {frequencyHints.map(l => (
+            <View key={l} style={[s.freqKey, { backgroundColor: colors.surface }]}>
+              <Text style={[s.freqKeyText, { color: colors.inkSoft }]}>{l}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+
       {/* QWERTY keyboard */}
       <View style={s.keyboard}>
         {ROWS.map((row, ri) => (
@@ -311,13 +329,22 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     paddingHorizontal: 16, maxWidth: SCREEN_W,
   },
   blank: { alignItems: 'center', paddingBottom: 2 },
-  blankLetter: { fontFamily: fonts.black, fontSize: 22 },
+  blankLetter: { fontFamily: fonts.black, fontSize: 22, includeFontPadding: false, textAlign: 'center', minWidth: 20 },
   blankLine: { height: 2, width: '100%', borderRadius: 1, marginTop: 4 },
 
   wrongLetters: {
     fontFamily: fonts.bold, fontSize: 13, color: colors.danger,
     letterSpacing: 2, marginTop: 10, minHeight: 20,
   },
+  freqRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6, marginBottom: 4,
+  },
+  freqLabel: { fontFamily: fonts.semiBold, fontSize: 12, color: colors.inkMuted },
+  freqKey: {
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8,
+    borderWidth: 1, borderColor: colors.divider,
+  },
+  freqKeyText: { fontFamily: fonts.bold, fontSize: 13 },
 
   keyboard: {
     marginTop: 14, alignItems: 'center', gap: 5, paddingHorizontal: 16,

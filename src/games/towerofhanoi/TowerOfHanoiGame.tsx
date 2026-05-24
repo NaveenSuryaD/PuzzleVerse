@@ -2,11 +2,14 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { View, Text, StyleSheet, TouchableOpacity, Modal, Dimensions } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
+import { useProgressStore } from '../../store/useProgressStore';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -22,18 +25,25 @@ function initPegs(n: number): number[][] {
   return [discs, [], []];
 }
 
-export function TowerOfHanoiGame({ onComplete, onBack }: Props) {
+export function TowerOfHanoiGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
+  const { levels, setGameLevel } = useProgressStore();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [discCount] = useState(3);
-  const [pegs, setPegs] = useState<number[][]>(() => initPegs(3));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [level, setLevel] = useState(() => levels['tower-of-hanoi'] ?? 1);
+  const initDiscs = Math.min(3 + ((levels['tower-of-hanoi'] ?? 1) - 1), 7);
+  const [discCount, setDiscCount] = useState(initDiscs);
+  const [pegs, setPegs] = useState<number[][]>(() => saved?.pegs ?? initPegs(initDiscs));
   const [selected, setSelected] = useState<number | null>(null);
-  const [moves, setMoves] = useState(0);
+  const [moves, setMoves] = useState<number>(() => saved?.moves ?? 0);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
+
+  useSaveGame('tower-of-hanoi', () => ({ pegs, moves }), !done, [pegs], elapsedRef);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 
@@ -86,7 +96,12 @@ export function TowerOfHanoiGame({ onComplete, onBack }: Props) {
 
   return (
     <View style={s.container}>
-      <Text style={s.title}>Tower of Hanoi</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+        <Text style={s.title}>Tower of Hanoi</Text>
+        <View style={[s.levelBadge, { backgroundColor: colors.visual.bg }]}>
+          <Text style={[s.levelText, { color: colors.visual.ink }]}>Level {level}</Text>
+        </View>
+      </View>
       <Text style={s.subtitle}>Move all discs to the right peg · Moves: {moves}</Text>
       <Text style={s.hint}>Tap a peg to select, then tap destination</Text>
 
@@ -140,7 +155,25 @@ export function TowerOfHanoiGame({ onComplete, onBack }: Props) {
                 <Text style={[s.modalBtnText, { color: colors.inkSoft }]}>Go Back</Text>
               </TouchableOpacity>
             )}
-            <TouchableOpacity style={s.modalBtn} onPress={() => {
+            {won && (
+              <TouchableOpacity style={s.modalBtn} onPress={() => {
+                const nextDiscs = Math.min(discCount + 1, 7);
+                const nextLevel = level + 1;
+                setDone(false);
+                completedRef.current = false;
+                setLevel(nextLevel);
+                setGameLevel('tower-of-hanoi', nextLevel);
+                setDiscCount(nextDiscs);
+                setPegs(initPegs(nextDiscs));
+                setSelected(null);
+                setMoves(0);
+                elapsedRef.current = 0;
+                timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              }}>
+                <Text style={s.modalBtnText}>Next Level →</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={[s.modalBtn, won && { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: colors.rule }]} onPress={() => {
               setDone(false);
               completedRef.current = false;
               setPegs(initPegs(discCount));
@@ -149,7 +182,7 @@ export function TowerOfHanoiGame({ onComplete, onBack }: Props) {
               elapsedRef.current = 0;
               timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
             }}>
-              <Text style={s.modalBtnText}>Play Again</Text>
+              <Text style={[s.modalBtnText, won && { color: colors.inkSoft }]}>Play Again</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -160,7 +193,9 @@ export function TowerOfHanoiGame({ onComplete, onBack }: Props) {
 
 const makeStyles = (colors: ReturnType<typeof useTheme>) => StyleSheet.create({
   container: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
-  title: { fontFamily: fonts.black, fontSize: 22, color: colors.ink, marginBottom: 4 },
+  title: { fontFamily: fonts.black, fontSize: 22, color: colors.ink },
+  levelBadge: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999 },
+  levelText: { fontFamily: fonts.extraBold, fontSize: 13 },
   subtitle: { fontFamily: fonts.semiBold, fontSize: 14, color: colors.inkMuted, marginBottom: 4 },
   hint: { fontFamily: fonts.semiBold, fontSize: 12, color: colors.inkMuted, marginBottom: 24 },
   board: { flexDirection: 'row', width: SCREEN_W - 48, height: PEG_H + 50, alignItems: 'flex-end' },

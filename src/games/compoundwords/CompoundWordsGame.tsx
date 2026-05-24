@@ -4,10 +4,12 @@ import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { COMPOUND_PAIRS } from './puzzles';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 function shuffle<T>(arr: T[]): T[] {
@@ -29,19 +31,23 @@ function buildRound(usedIndices: Set<number>) {
   return { idx, puzzle: correct, choices };
 }
 
-export function CompoundWordsGame({ onComplete, onBack }: Props) {
+export function CompoundWordsGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [round, setRound] = useState(1);
-  const [score, setScore] = useState(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [round, setRound] = useState<number>(() => saved?.round ?? 1);
+  const [score, setScore] = useState<number>(() => saved?.score ?? 0);
   const [usedIndices] = useState(() => new Set<number>());
   const [current, setCurrent] = useState(() => buildRound(new Set<number>()));
   const [selected, setSelected] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
+
+  useSaveGame('compound-words', () => ({ round, score }), !done, [round, score], elapsedRef);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 

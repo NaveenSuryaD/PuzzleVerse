@@ -3,10 +3,12 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 // Shikaku: divide grid into rectangles, each containing exactly one number
@@ -38,19 +40,23 @@ function rectContains(r1: number, c1: number, r2: number, c2: number, r: number,
   return r >= r1 && r <= r2 && c >= c1 && c <= c2;
 }
 
-export function ShikakuGame({ onComplete, onBack }: Props) {
+export function ShikakuGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
   const puz = PUZZLES[0];
   const ROWS = puz.rows, COLS = puz.cols;
 
   const [selecting, setSelecting] = useState<{ r: number; c: number } | null>(null);
-  const [rects, setRects] = useState<Array<{ r1: number; c1: number; r2: number; c2: number; color: string }>>([]);
+  const [rects, setRects] = useState<Array<{ r1: number; c1: number; r2: number; c2: number; color: string }>>(() => saved?.rects ?? []);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
+
+  useSaveGame('shikaku', () => ({ rects }), !done, [rects], elapsedRef);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 

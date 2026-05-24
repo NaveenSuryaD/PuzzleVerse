@@ -5,10 +5,12 @@ import { fonts } from '../../theme/typography';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import * as Haptics from 'expo-haptics';
 import { playSound } from '../../audio/sounds';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -53,7 +55,7 @@ function computeMaxScore(words: string[]): number {
   return words.reduce((sum, w) => sum + (w.length <= 4 ? 1 : w.length), 0);
 }
 
-export function WordHiveGame({ onComplete, onBack }: Props) {
+export function WordHiveGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const hapticsEnabled = useSettingsStore(s => s.hapticsEnabled);
   const reducedMotion = useSettingsStore(s => s.reducedMotion);
@@ -61,17 +63,21 @@ export function WordHiveGame({ onComplete, onBack }: Props) {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [hiveIdx] = useState(() => Math.floor(Math.random() * HIVE_SETS.length));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [hiveIdx] = useState<number>(() => saved?.hiveIdx ?? Math.floor(Math.random() * HIVE_SETS.length));
   const hive = HIVE_SETS[hiveIdx];
   const maxScore = useMemo(() => computeMaxScore(hive.validWords), [hive]);
 
   const [input, setInput] = useState('');
-  const [found, setFound] = useState<string[]>([]);
+  const [found, setFound] = useState<string[]>(() => saved?.found ?? []);
   const [score, setScore] = useState(0);
   const [message, setMessage] = useState('');
   const [isPangram, setIsPangram] = useState(false);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
+
+  useSaveGame('word-hive', () => ({ hiveIdx, found }), !done, [hiveIdx, found], elapsedRef);
   const [shuffledOuter, setShuffledOuter] = useState(() => {
     const outer = hive.letters.filter(l => l !== hive.center);
     return [...outer].sort(() => Math.random() - 0.5);

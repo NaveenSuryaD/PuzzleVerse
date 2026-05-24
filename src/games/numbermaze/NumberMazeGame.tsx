@@ -3,10 +3,12 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 // Number Maze: move through a grid, must visit cells in ascending order
@@ -37,30 +39,33 @@ const PUZZLES = [
 
 const CELL_SIZE = 68;
 
-export function NumberMazeGame({ onComplete, onBack }: Props) {
+export function NumberMazeGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [puzIdx, setPuzIdx] = useState(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [puzIdx, setPuzIdx] = useState<number>(() => saved?.puzIdx ?? 0);
   const puz = PUZZLES[puzIdx];
 
   // Find starting position (cell with value 1)
-  const startPos = useMemo(() => {
+  const startPos = useMemo((): [number, number] => {
     for (let r = 0; r < puz.rows; r++)
       for (let c = 0; c < puz.cols; c++)
         if (puz.grid[r][c] === 1) return [r, c];
     return [0, 0];
   }, [puz]);
 
-  const [pos, setPos] = useState(startPos);
-  const [nextNum, setNextNum] = useState(2); // next required number to collect
-  const [visited, setVisited] = useState<Set<string>>(new Set(['0,0']));
+  const [pos, setPos] = useState<[number,number]>(() => (saved?.pos as [number,number]) ?? startPos);
+  const [nextNum, setNextNum] = useState<number>(() => saved?.nextNum ?? 2);
+  const [visited, setVisited] = useState<Set<string>>(() => new Set(saved?.visited ?? ['0,0']));
   const [path, setPath] = useState<[number,number][]>([[startPos[0], startPos[1]]]);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
 
+  useSaveGame('number-maze', () => ({ puzIdx, pos, nextNum, visited: [...visited] }), !done, [puzIdx, pos, nextNum], elapsedRef);
   const s = useMemo(() => makeStyles(colors), [colors]);
 
   useEffect(() => {

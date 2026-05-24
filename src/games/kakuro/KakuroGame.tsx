@@ -5,27 +5,63 @@ import { fonts } from '../../theme/typography';
 import { KAKURO_PUZZLES } from './puzzles';
 import type { KakuroGrid } from './types';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
-export function KakuroGame({ onComplete, onBack }: Props) {
+function acrossRunCells(grid: KakuroGrid, r: number, c: number): [number, number][] {
+  let sc = c;
+  while (sc > 0 && grid[r][sc - 1]?.type === 'white') sc--;
+  const cells: [number, number][] = [];
+  for (let cc = sc; cc < grid[r].length && grid[r][cc]?.type === 'white'; cc++) cells.push([r, cc]);
+  return cells;
+}
+
+function downRunCells(grid: KakuroGrid, r: number, c: number): [number, number][] {
+  let sr = r;
+  while (sr > 0 && grid[sr - 1]?.[c]?.type === 'white') sr--;
+  const cells: [number, number][] = [];
+  for (let rr = sr; rr < grid.length && grid[rr]?.[c]?.type === 'white'; rr++) cells.push([rr, c]);
+  return cells;
+}
+
+function computeConflicts(grid: KakuroGrid): Set<string> {
+  const conflicts = new Set<string>();
+  for (let r = 0; r < grid.length; r++) {
+    for (let c = 0; c < grid[r].length; c++) {
+      if (grid[r][c].type !== 'white' || grid[r][c].value === null) continue;
+      const val = grid[r][c].value!;
+      for (const run of [acrossRunCells(grid, r, c), downRunCells(grid, r, c)]) {
+        const dupes = run.filter(([rr, cc]) => grid[rr][cc].value === val);
+        if (dupes.length > 1) dupes.forEach(([rr, cc]) => conflicts.add(`${rr},${cc}`));
+      }
+    }
+  }
+  return conflicts;
+}
+
+export function KakuroGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [puzzleIdx, setPuzzleIdx] = useState(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [puzzleIdx, setPuzzleIdx] = useState<number>(() => saved?.puzzleIdx ?? 0);
   const [grid, setGrid] = useState<KakuroGrid>(() =>
-    KAKURO_PUZZLES[0].map(row => row.map(c => ({ ...c })))
+    saved?.grid ?? KAKURO_PUZZLES[0].map(row => row.map(c => ({ ...c })))
   );
   const [selected, setSelected] = useState<[number, number] | null>(null);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
-  const [errors, setErrors] = useState<Set<string>>(new Set());
+  const [conflicts, setConflicts] = useState<Set<string>>(new Set());
 
+  useSaveGame('kakuro', () => ({ puzzleIdx, grid }), !done, [puzzleIdx, grid], elapsedRef);
   const s = useMemo(() => makeStyles(colors), [colors]);
 
   useEffect(() => {
@@ -56,6 +92,7 @@ export function KakuroGame({ onComplete, onBack }: Props) {
     setGrid(prev => {
       const next = prev.map(row => row.map(cell => ({ ...cell })));
       next[r][c] = { ...next[r][c], value: n };
+      setConflicts(computeConflicts(next));
       checkSolved(next);
       return next;
     });
@@ -67,6 +104,7 @@ export function KakuroGame({ onComplete, onBack }: Props) {
     setGrid(prev => {
       const next = prev.map(row => row.map(cell => ({ ...cell })));
       next[r][c] = { ...next[r][c], value: null };
+      setConflicts(computeConflicts(next));
       return next;
     });
   }, [selected]);
@@ -99,16 +137,14 @@ export function KakuroGame({ onComplete, onBack }: Props) {
                 );
               }
               const isSelected = selected?.[0] === ri && selected?.[1] === ci;
-              const isCorrect = cell.value !== null && cell.value === cell.solution;
-              const isWrong = cell.value !== null && cell.value !== cell.solution;
+              const hasConflict = conflicts.has(`${ri},${ci}`);
               return (
                 <TouchableOpacity
                   key={ci}
                   style={[
                     s.cell,
                     { width: CELL_SIZE, height: CELL_SIZE, backgroundColor: isSelected ? colors.logic.bg : colors.surface },
-                    isWrong && { backgroundColor: '#FFE5E5' },
-                    isCorrect && { backgroundColor: colors.number.bg },
+                    hasConflict && { backgroundColor: '#FFE5E5' },
                   ]}
                   onPress={() => setSelected([ri, ci])}
                   activeOpacity={0.7}
@@ -159,6 +195,7 @@ export function KakuroGame({ onComplete, onBack }: Props) {
               setPuzzleIdx(next);
               setGrid(KAKURO_PUZZLES[next].map(row => row.map(c => ({ ...c }))));
               setSelected(null);
+              setConflicts(new Set());
               elapsedRef.current = 0;
               timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
             }}>

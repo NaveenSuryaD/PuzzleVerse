@@ -3,10 +3,12 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 // Word Parts: combine prefix + root + suffix to form a word
@@ -57,21 +59,24 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-export function WordPartsGame({ onComplete, onBack }: Props) {
+export function WordPartsGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [questions] = useState(() => shuffle([...QUESTIONS]).slice(0, 5));
-  const [round, setRound] = useState(0);
-  const [score, setScore] = useState(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [questions] = useState<typeof QUESTIONS[0][]>(() => saved?.questions ?? shuffle([...QUESTIONS]).slice(0, 5));
+  const [round, setRound] = useState<number>(() => saved?.round ?? 0);
+  const [score, setScore] = useState<number>(() => saved?.score ?? 0);
   const [selectedPrefix, setSelectedPrefix] = useState<string | null>(null);
   const [selectedSuffix, setSelectedSuffix] = useState<string | null>(null);
   const [checked, setChecked] = useState(false);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
 
+  useSaveGame('word-parts', () => ({ questions, round, score }), !done, [round], elapsedRef);
   const s = useMemo(() => makeStyles(colors), [colors]);
   const current = questions[round];
 

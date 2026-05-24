@@ -4,28 +4,33 @@ import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { SCALE_PUZZLES } from './puzzles';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 const SHAPES: Record<string, string> = { circle: '●', square: '■', triangle: '▲' };
 const SHAPE_COLORS: Record<string, string> = { circle: '#E74C3C', square: '#3498DB', triangle: '#2ECC71' };
 
-export function BalanceScalesGame({ onComplete, onBack }: Props) {
+export function BalanceScalesGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [puzzleIdx, setPuzzleIdx] = useState(0);
-  const [round, setRound] = useState(1);
-  const [score, setScore] = useState(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [puzzleIdx, setPuzzleIdx] = useState<number>(() => saved?.puzzleIdx ?? 0);
+  const [round, setRound] = useState<number>(() => saved?.round ?? 1);
+  const [score, setScore] = useState<number>(() => saved?.score ?? 0);
   const [selected, setSelected] = useState<number | null>(null);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
 
+  useSaveGame('balance-scales', () => ({ puzzleIdx, round, score }), !done, [puzzleIdx, round, score], elapsedRef);
   const s = useMemo(() => makeStyles(colors), [colors]);
 
   useEffect(() => {

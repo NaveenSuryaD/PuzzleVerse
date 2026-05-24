@@ -4,31 +4,35 @@ import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { PIXEL_ART_DESIGNS } from './puzzles';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const CELL = Math.min(Math.floor((SCREEN_W - 48) / 8), 40);
 
-export function PixelArtGame({ onComplete, onBack }: Props) {
+export function PixelArtGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [designIdx] = useState(() => Math.floor(Math.random() * PIXEL_ART_DESIGNS.length));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [designIdx] = useState<number>(() => saved?.designIdx ?? Math.floor(Math.random() * PIXEL_ART_DESIGNS.length));
   const design = PIXEL_ART_DESIGNS[designIdx];
 
-  // User grid starts all 0 (uncolored)
   const [userGrid, setUserGrid] = useState<number[][]>(() =>
-    Array.from({ length: 8 }, () => Array(8).fill(-1))
+    saved?.userGrid ?? Array.from({ length: 8 }, () => Array(8).fill(-1))
   );
   const [selectedColor, setSelectedColor] = useState(1);
   const [done, setDone] = useState(false);
 
+  useSaveGame('pixel-art', () => ({ designIdx, userGrid }), !done, [userGrid], elapsedRef);
   const s = useMemo(() => makeStyles(colors), [colors]);
 
   useEffect(() => {

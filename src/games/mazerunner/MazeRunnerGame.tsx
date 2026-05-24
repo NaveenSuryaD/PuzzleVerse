@@ -3,26 +3,36 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal, Dimensions } from 'rea
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
-import { generateMaze, MAZE_SIZE } from './generator';
+import { generateMaze, getMazeSize, type MazeData } from './generator';
+import { useProgressStore } from '../../store/useProgressStore';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 const { width: SCREEN_W } = Dimensions.get('window');
-const CELL_SIZE = Math.min(Math.floor((SCREEN_W - 48) / MAZE_SIZE), 28);
 
-export function MazeRunnerGame({ onComplete, onBack }: Props) {
+export function MazeRunnerGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
+  const { levels, setGameLevel } = useProgressStore();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [maze] = useState(() => generateMaze());
-  const [pos, setPos] = useState<[number, number]>([1, 1]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [level, setLevel] = useState(() => levels['maze-runner'] ?? 1);
+  const [maze, setMaze] = useState<MazeData>(() => saved?.maze ?? generateMaze(levels['maze-runner'] ?? 1));
+  const [pos, setPos] = useState<[number, number]>(() => (saved?.pos as [number,number]) ?? [1, 1]);
   const [done, setDone] = useState(false);
+
+  useSaveGame('maze-runner', () => ({ maze, pos }), !done, [pos], elapsedRef);
+
+  const cellSize = Math.min(Math.floor((SCREEN_W - 48) / getMazeSize(level)), 28);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 
@@ -54,7 +64,12 @@ export function MazeRunnerGame({ onComplete, onBack }: Props) {
 
   return (
     <View style={s.container}>
-      <Text style={s.title}>Maze Runner</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+        <Text style={s.title}>Maze Runner</Text>
+        <View style={[s.levelBadge, { backgroundColor: colors.visual.bg }]}>
+          <Text style={[s.levelText, { color: colors.visual.ink }]}>Level {level}</Text>
+        </View>
+      </View>
       <Text style={s.subtitle}>Navigate from entry (top) to exit (bottom)</Text>
 
       <View style={s.mazeWrap}>
@@ -62,22 +77,21 @@ export function MazeRunnerGame({ onComplete, onBack }: Props) {
           <View key={ri} style={{ flexDirection: 'row' }}>
             {row.map((isWall, ci) => {
               const isPlayer = pos[0] === ri && pos[1] === ci;
-              const isStart = ri === 0 && ci === 1;
               const isEnd = ri === maze.size - 1 && ci === maze.size - 2;
               return (
                 <View
                   key={ci}
                   style={[
-                    { width: CELL_SIZE, height: CELL_SIZE },
+                    { width: cellSize, height: cellSize },
                     isWall ? s.wall : s.passage,
                     isEnd && s.exit,
                   ]}
                 >
                   {isPlayer && (
-                    <View style={s.player} />
+                    <View style={[s.player, { width: cellSize * 0.6, height: cellSize * 0.6, borderRadius: cellSize * 0.3, margin: cellSize * 0.2 }]} />
                   )}
                   {isEnd && !isPlayer && (
-                    <Text style={{ fontSize: CELL_SIZE * 0.5, textAlign: 'center', lineHeight: CELL_SIZE }}>★</Text>
+                    <Text style={{ fontSize: cellSize * 0.5, textAlign: 'center', lineHeight: cellSize }}>★</Text>
                   )}
                 </View>
               );
@@ -114,7 +128,7 @@ export function MazeRunnerGame({ onComplete, onBack }: Props) {
           <View style={s.modal}>
             <Text style={s.modalEmoji}>🏃</Text>
             <Text style={s.modalTitle}>Escaped!</Text>
-            <Text style={s.modalSub}>Time: {elapsedRef.current}s</Text>
+            <Text style={s.modalSub}>Level {level} · Time: {elapsedRef.current}s</Text>
             {onBack && (
               <TouchableOpacity
                 style={[s.modalBtn, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: colors.rule, marginTop: 8 }]}
@@ -124,12 +138,27 @@ export function MazeRunnerGame({ onComplete, onBack }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
+              const nextLevel = level + 1;
               setDone(false); completedRef.current = false;
+              setLevel(nextLevel);
+              setGameLevel('maze-runner', nextLevel);
+              const nextMaze = generateMaze(nextLevel);
+              setMaze(nextMaze);
               setPos([1, 1]);
               elapsedRef.current = 0;
               timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
             }}>
-              <Text style={s.modalBtnText}>Play Again</Text>
+              <Text style={s.modalBtnText}>Next Level →</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[s.modalBtn, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: colors.rule, marginTop: 8 }]} onPress={() => {
+              setDone(false); completedRef.current = false;
+              const newMaze = generateMaze(level);
+              setMaze(newMaze);
+              setPos([1, 1]);
+              elapsedRef.current = 0;
+              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+            }}>
+              <Text style={[s.modalBtnText, { color: colors.inkSoft }]}>Replay</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -140,13 +169,15 @@ export function MazeRunnerGame({ onComplete, onBack }: Props) {
 
 const makeStyles = (colors: ReturnType<typeof useTheme>) => StyleSheet.create({
   container: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 16 },
-  title: { fontFamily: fonts.black, fontSize: 22, color: colors.ink, marginBottom: 4 },
+  title: { fontFamily: fonts.black, fontSize: 22, color: colors.ink },
+  levelBadge: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999 },
+  levelText: { fontFamily: fonts.extraBold, fontSize: 13 },
   subtitle: { fontFamily: fonts.semiBold, fontSize: 12, color: colors.inkMuted, marginBottom: 16 },
   mazeWrap: { borderWidth: 1, borderColor: colors.ink, marginBottom: 20 },
   wall: { backgroundColor: colors.ink },
   passage: { backgroundColor: colors.surface },
   exit: { backgroundColor: colors.success + '40' },
-  player: { width: CELL_SIZE * 0.6, height: CELL_SIZE * 0.6, borderRadius: CELL_SIZE * 0.3, backgroundColor: colors.danger, margin: CELL_SIZE * 0.2 },
+  player: { backgroundColor: colors.danger },
   dpad: { gap: 4 },
   dBtn: { width: 52, height: 52, backgroundColor: colors.surface, borderRadius: 12, alignItems: 'center', justifyContent: 'center', shadowColor: colors.ink, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 2 },
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' },

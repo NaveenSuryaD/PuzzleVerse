@@ -9,6 +9,7 @@ import { fonts } from '../../theme/typography';
 import { getRandomCrossword } from './puzzles';
 import type { CrosswordPuzzle, Direction, ClueEntry } from './types';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { playSound } from '../../audio/sounds';
 
@@ -25,6 +26,7 @@ const KEYBOARD_ROWS = [
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
 function computeNumbers(solution: string[][]): (number | undefined)[][] {
@@ -51,14 +53,16 @@ function getCellsForClue(clue: ClueEntry): [number, number][] {
   return cells;
 }
 
-export function CrosswordGame({ onComplete, onBack }: Props) {
+export function CrosswordGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
   const hapticsEnabled = useSettingsStore(st => st.hapticsEnabled);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
   const [puzzle, setPuzzle] = useState<CrosswordPuzzle>(() => getRandomCrossword());
   const [userGrid, setUserGrid] = useState<string[][]>(() =>
-    puzzle.solution.map(row => row.map(c => (c === '#' ? '#' : ''))),
+    saved?.userGrid ?? puzzle.solution.map(row => row.map(c => (c === '#' ? '#' : ''))),
   );
   const [selectedClue, setSelectedClue] = useState<ClueEntry | null>(null);
   const [direction, setDirection] = useState<Direction>('across');
@@ -71,6 +75,8 @@ export function CrosswordGame({ onComplete, onBack }: Props) {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
   const lastTappedRef = useRef<string | null>(null);
+
+  useSaveGame('crossword-mini', () => ({ userGrid }), !done, [userGrid], elapsedRef);
 
   // Clue list scroll
   const clueScrollRef = useRef<ScrollView>(null);
@@ -498,7 +504,7 @@ const makeStyles = (colors: ThemeColors) => {
       fontFamily: fonts.bold, fontSize: 8, color: colors.inkMuted,
     },
     cellLetter: {
-      fontFamily: fonts.black, fontSize: CELL_SIZE * 0.42,
+      fontFamily: fonts.black, fontSize: CELL_SIZE * 0.42, color: colors.ink,
     },
 
     activeClue: {

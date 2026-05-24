@@ -143,7 +143,11 @@ export default function HomeScreen() {
   const hour = now.getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 
-  const wordGuessProgress = progressGames['word-guess'];
+  const todayISO = now.toISOString().slice(0, 10);
+  const todayPlayed = useMemo(
+    () => Object.values(progressGames).filter(g => g.lastPlayedDate === todayISO).length,
+    [progressGames, todayISO],
+  );
 
   return (
     <SafeAreaView style={s.container} edges={['top']}>
@@ -170,39 +174,30 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* Hero — Today's Puzzle */}
+        {/* PuzzleVerse branded banner */}
         <View style={s.heroWrap}>
-          <TouchableOpacity
-            style={[s.heroCard, { backgroundColor: colors.word.bg }]}
-            onPress={() => router.push('/game/word-guess?mode=daily')}
-            activeOpacity={0.88}
-          >
-            {/* Decorative blobs */}
-            <View style={[s.heroBlob1, { backgroundColor: colors.word.soft }]} />
-            <View style={[s.heroBlob2, { backgroundColor: colors.word.soft }]} />
-
-            <View style={s.heroEyebrow}>
-              <View style={[s.eyebrowDot, { backgroundColor: colors.word.ink }]} />
-              <Text style={[s.eyebrowText, { color: colors.word.ink }]}>TODAY'S PUZZLE</Text>
-            </View>
-            <Text style={[s.heroTitle, { color: colors.word.ink }]}>Word Guess</Text>
-            <Text style={[s.heroSub, { color: colors.word.ink }]}>Guess the 5-letter word · 6 tries</Text>
-
-            <View style={s.heroFooter}>
-              {wordGuessProgress && wordGuessProgress.gamesPlayed > 0 && (
-                <View style={s.solvedRow}>
-                  <Ionicons name="trophy-outline" size={12} color={colors.word.ink} />
-                  <Text style={[s.solvedText, { color: colors.word.ink }]}>
-                    {wordGuessProgress.gamesWon} solved
+          <View style={s.brandBanner}>
+            <View style={[s.bannerBlob1, { backgroundColor: colors.logic.soft }]} />
+            <View style={[s.bannerBlob2, { backgroundColor: colors.word.soft }]} />
+            <View style={[s.bannerBlob3, { backgroundColor: colors.classic.soft }]} />
+            <View style={s.bannerContent}>
+              <Text style={[s.bannerTitle, { color: colors.ink }]}>PuzzleVerse</Text>
+              <Text style={[s.bannerTagline, { color: colors.inkSoft }]}>Every puzzle. Unlimited.</Text>
+              {todayPlayed > 0 && (
+                <View style={s.bannerStatRow}>
+                  <Ionicons name="game-controller-outline" size={13} color={colors.inkMuted} />
+                  <Text style={[s.bannerStat, { color: colors.inkMuted }]}>
+                    {todayPlayed} game{todayPlayed !== 1 ? 's' : ''} played today
                   </Text>
                 </View>
               )}
-              <View style={[s.playButton, { backgroundColor: colors.ink }]}>
-                <Ionicons name="play" size={13} color={colors.bg} />
-                <Text style={[s.playButtonText, { color: colors.bg }]}>Play</Text>
-              </View>
             </View>
-          </TouchableOpacity>
+            <View style={s.bannerQuadrant}>
+              {(['word', 'number', 'logic', 'classic'] as const).map(cat => (
+                <View key={cat} style={[s.bannerQuadCell, { backgroundColor: colors[cat].bg }]} />
+              ))}
+            </View>
+          </View>
         </View>
 
         {/* Favorites / Most Played quick-access row */}
@@ -493,86 +488,82 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     paddingTop: 14,
     paddingBottom: 4,
   },
-  heroCard: {
+  brandBanner: {
     borderRadius: 28,
     padding: 22,
-    minHeight: 168,
+    minHeight: 128,
     overflow: 'hidden',
-    gap: 0,
-  },
-  heroBlob1: {
-    position: 'absolute',
-    right: -30,
-    top: -30,
-    width: 140,
-    height: 140,
-    borderRadius: 70,
-  },
-  heroBlob2: {
-    position: 'absolute',
-    right: 30,
-    bottom: -40,
-    width: 90,
-    height: 90,
-    borderRadius: 24,
-    transform: [{ rotate: '20deg' }],
-  },
-  heroEyebrow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 8,
-  },
-  eyebrowDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  eyebrowText: {
-    fontFamily: fonts.extraBold,
-    fontSize: 12,
-    letterSpacing: 0.8,
-  },
-  heroTitle: {
-    fontFamily: fonts.black,
-    fontSize: 30,
-    letterSpacing: -0.8,
-    lineHeight: 34,
-  },
-  heroSub: {
-    fontFamily: fonts.semiBold,
-    fontSize: 14,
-    marginTop: 8,
-    opacity: 0.8,
-  },
-  heroFooter: {
+    backgroundColor: colors.surface,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 'auto',
-    paddingTop: 14,
+    shadowColor: colors.ink,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 3,
   },
-  solvedRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  bannerBlob1: {
+    position: 'absolute',
+    right: -20,
+    top: -20,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+  },
+  bannerBlob2: {
+    position: 'absolute',
+    left: -10,
+    bottom: -30,
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+  },
+  bannerBlob3: {
+    position: 'absolute',
+    right: 80,
+    bottom: -20,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+  },
+  bannerContent: {
+    flex: 1,
     gap: 4,
   },
-  solvedText: {
-    fontFamily: fonts.bold,
-    fontSize: 12,
-    opacity: 0.8,
+  bannerTitle: {
+    fontFamily: fonts.black,
+    fontSize: 28,
+    letterSpacing: -0.8,
+    lineHeight: 32,
   },
-  playButton: {
+  bannerTagline: {
+    fontFamily: fonts.semiBold,
+    fontSize: 14,
+  },
+  bannerStatRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 999,
+    gap: 5,
+    marginTop: 6,
   },
-  playButtonText: {
-    fontFamily: fonts.extraBold,
-    fontSize: 14,
+  bannerStat: {
+    fontFamily: fonts.semiBold,
+    fontSize: 13,
+  },
+  bannerQuadrant: {
+    width: 56,
+    height: 56,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 3,
+    marginLeft: 16,
+    flexShrink: 0,
+  },
+  bannerQuadCell: {
+    width: 24,
+    height: 24,
+    borderRadius: 7,
   },
   pillsScroll: {},
   pillsRow: {

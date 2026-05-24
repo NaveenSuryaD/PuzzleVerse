@@ -131,5 +131,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: fonts.bold,
     lineHeight: 18,
+    color: '#000000',
   },
 });

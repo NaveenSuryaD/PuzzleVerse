@@ -4,23 +4,29 @@ import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { MAGIC_SQUARE_PUZZLES } from './puzzles';
 import * as Haptics from 'expo-haptics';
+import { useSaveGame } from '../../utils/gameSave';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  savedStateJSON?: string;
 }
 
-export function MagicSquareGame({ onComplete, onBack }: Props) {
+export function MagicSquareGame({ onComplete, onBack, savedStateJSON }: Props) {
   const colors = useTheme();
   const elapsedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
-  const [puzzleIdx, setPuzzleIdx] = useState(() => Math.floor(Math.random() * MAGIC_SQUARE_PUZZLES.length));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  const [puzzleIdx, setPuzzleIdx] = useState<number>(() => saved?.puzzleIdx ?? Math.floor(Math.random() * MAGIC_SQUARE_PUZZLES.length));
   const puzzle = MAGIC_SQUARE_PUZZLES[puzzleIdx];
-  const [grid, setGrid] = useState<(number | null)[][]>(() => puzzle.given.map(r => [...r]));
+  const [grid, setGrid] = useState<(number | null)[][]>(() => saved?.grid ?? puzzle.given.map(r => [...r]));
   const [selected, setSelected] = useState<[number, number] | null>(null);
   const [done, setDone] = useState(false);
+
+  useSaveGame('magic-square', () => ({ puzzleIdx, grid }), !done, [puzzleIdx, grid], elapsedRef);
   const [won, setWon] = useState(false);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
