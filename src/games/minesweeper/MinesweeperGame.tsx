@@ -6,35 +6,49 @@ import { initGrid, reveal, isWon, DIFFICULTY_CONFIG, type MsDifficulty } from '.
 import type { MineGrid } from './types';
 import * as Haptics from 'expo-haptics';
 import { useSettingsStore } from '../../store/useSettingsStore';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
+
+interface MinesweeperSaveState {
+  difficulty: MsDifficulty;
+  grid: MineGrid | null;
+}
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
 }
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
 const NUM_COLORS = ['', '#3498DB', '#27AE60', '#E74C3C', '#2C3E50', '#8E44AD', '#1ABC9C', '#E67E22', '#95A5A6'];
 
-export function MinesweeperGame({ onComplete, onBack, savedStateJSON }: Props) {
+export function MinesweeperGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
   const hapticsEnabled = useSettingsStore(st => st.hapticsEnabled);
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
   const timerStartedRef = useRef(false);
 
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
-  const [difficulty, setDifficulty] = useState<MsDifficulty>(() => (saved?.difficulty ?? 'easy') as MsDifficulty);
-  const [grid, setGrid] = useState<MineGrid | null>(() => saved?.grid ?? null);
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<MinesweeperSaveState>('minesweeper');
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<MinesweeperSaveState | null>(null);
+
+  const [difficulty, setDifficulty] = useState<MsDifficulty>('easy');
+  const [grid, setGrid] = useState<MineGrid | null>(null);
   const [flagMode, setFlagMode] = useState(false);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
-
-  useSaveGame('minesweeper', () => ({ difficulty, grid }), !done, [grid], elapsedRef);
   const [exploded, setExploded] = useState<[number, number] | null>(null);
   const [elapsed, setElapsed] = useState(0);
 
@@ -43,27 +57,67 @@ export function MinesweeperGame({ onComplete, onBack, savedStateJSON }: Props) {
   const cfg = DIFFICULTY_CONFIG[difficulty];
   const CELL = Math.min(Math.floor((SCREEN_W - 32) / cfg.cols), 38);
 
-  useEffect(() => {
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  const initNewGame = useCallback(() => {
+    setGrid(null);
+    setExploded(null);
+    setElapsed(0);
+    setFlagMode(false);
+    setDone(false);
+    setWon(false);
+    timerStartedRef.current = false;
   }, []);
 
-  const startTimer = useCallback(() => {
+  useEffect(() => {
+    const checkSaved = async () => {
+      const result = await load();
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        initNewGame();
+      }
+    };
+    checkSaved();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (done) { clear(); return; }
+    save({ difficulty, grid }, timer.elapsedSeconds);
+  }, [grid]);
+
+  const handleResume = useCallback(() => {
+    setShowResumeModal(false);
+    if (pendingSavedState) {
+      setDifficulty(pendingSavedState.difficulty);
+      setGrid(pendingSavedState.grid);
+      if (pendingSavedState.grid) {
+        timerStartedRef.current = true;
+      }
+    }
+    timer.restoreAndResume(resumeElapsed);
+    setPendingSavedState(null);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    setShowResumeModal(false);
+    clear();
+    initNewGame();
+    setPendingSavedState(null);
+  }, [clear, initNewGame]);
+
+  const startGameTimer = useCallback(() => {
     if (timerStartedRef.current) return;
     timerStartedRef.current = true;
-    timerRef.current = setInterval(() => {
-      elapsedRef.current += 1;
-      setElapsed(elapsedRef.current);
-    }, 1000);
-  }, []);
+    timer.start();
+  }, [timer]);
 
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
     setWon(w);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer]);
 
   const toggleFlag = useCallback((r: number, c: number) => {
     if (!grid) return;
@@ -80,7 +134,7 @@ export function MinesweeperGame({ onComplete, onBack, savedStateJSON }: Props) {
 
   const handleTap = useCallback((r: number, c: number) => {
     if (!grid) {
-      startTimer();
+      startGameTimer();
       const newGrid = initGrid(r, c, difficulty);
       const revealed = reveal(newGrid, r, c, difficulty);
       setGrid(revealed);
@@ -108,28 +162,29 @@ export function MinesweeperGame({ onComplete, onBack, savedStateJSON }: Props) {
       if (isWon(next)) finish(true);
       return next;
     });
-  }, [grid, flagMode, difficulty, finish, startTimer, toggleFlag, hapticsEnabled]);
+  }, [grid, flagMode, difficulty, finish, startGameTimer, toggleFlag, hapticsEnabled]);
 
   const resetGame = useCallback((diff?: MsDifficulty) => {
-    const d = diff ?? difficulty;
-    setDone(false);
-    completedRef.current = false;
-    timerStartedRef.current = false;
-    setGrid(null);
-    setExploded(null);
-    setElapsed(0);
-    elapsedRef.current = 0;
-    setFlagMode(false);
-    if (timerRef.current) clearInterval(timerRef.current);
+    initNewGame();
     if (diff) setDifficulty(diff);
-  }, [difficulty]);
+  }, [initNewGame]);
 
   const flagCount = grid ? grid.reduce((sum, row) => sum + row.filter(c => c.isFlagged).length, 0) : 0;
   const minesLeft = cfg.mines - flagCount;
-  const timeStr = `${Math.floor(elapsed / 60).toString().padStart(2, '0')}:${(elapsed % 60).toString().padStart(2, '0')}`;
+  const displayElapsed = timer.elapsedSeconds;
+  const timeStr = `${Math.floor(displayElapsed / 60).toString().padStart(2, '0')}:${(displayElapsed % 60).toString().padStart(2, '0')}`;
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="💣"
+        gameName="Minesweeper"
+        elapsedSeconds={resumeElapsed}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       {/* Difficulty selector */}
       <View style={s.diffRow}>
         {(['easy', 'medium', 'hard'] as MsDifficulty[]).map(d => (

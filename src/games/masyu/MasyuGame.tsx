@@ -1,14 +1,16 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
 }
 
 // Masyu: draw a loop through all circles
@@ -42,40 +44,83 @@ const PUZZLES = [
 
 const CELL = 60;
 
-export function MasyuGame({ onComplete, onBack, savedStateJSON }: Props) {
+interface SavedState {
+  edges: string[];
+}
+
+export function MasyuGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SavedState>('masyu');
+
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SavedState | null>(null);
 
   const puz = PUZZLES[0];
   const SIZE = puz.size;
 
-  // Edges: "r1,c1-r2,c2" where r1<=r2 (or c1<=c2 if same row)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
-  const [edges, setEdges] = useState<Set<string>>(() => new Set(saved?.edges ?? []));
+  const [edges, setEdges] = useState<Set<string>>(() => new Set([]));
   const [lastNode, setLastNode] = useState<[number,number] | null>(null);
   const [done, setDone] = useState(false);
-
-  useSaveGame('masyu', () => ({ edges: [...edges] }), !done, [edges], elapsedRef);
   const [won, setWon] = useState(false);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Mount effect: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    load().then(result => {
+      if (result.found && result.gameState) {
+        setResumeElapsed(result.elapsedSeconds);
+        setPendingSavedState(result.gameState);
+        setShowResumeModal(true);
+        timer.pause();
+      } else {
+        timer.start();
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Save effect
+  useEffect(() => {
+    if (!done) {
+      save({ edges: [...edges] }, timer.elapsedSeconds);
+    }
+  }, [edges, done, save, timer.elapsedSeconds]);
+
+  const handleResume = useCallback(() => {
+    setShowResumeModal(false);
+    if (pendingSavedState) {
+      setEdges(new Set(pendingSavedState.edges));
+    }
+    timer.restoreAndResume(resumeElapsed);
+    setPendingSavedState(null);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    setShowResumeModal(false);
+    setPendingSavedState(null);
+    clear();
+    setEdges(new Set());
+    setLastNode(null);
+    timer.start();
+  }, [clear, timer]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    clear();
     setWon(w);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer.elapsedSeconds, clear]);
 
   const edgeKey = (r1: number, c1: number, r2: number, c2: number) => {
     if (r1 < r2 || (r1===r2 && c1<c2)) return `${r1},${c1}-${r2},${c2}`;
@@ -125,6 +170,16 @@ export function MasyuGame({ onComplete, onBack, savedStateJSON }: Props) {
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="⬤"
+        gameName="Masyu"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `${pendingSavedState.edges.length} edges drawn` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <Text style={s.title}>Masyu</Text>
       <Text style={s.subtitle}>Tap nodes to draw a loop through all circles</Text>
 
@@ -183,10 +238,9 @@ export function MasyuGame({ onComplete, onBack, savedStateJSON }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
               setEdges(new Set()); setLastNode(null);
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Play Again</Text>
             </TouchableOpacity>

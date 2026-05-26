@@ -1,14 +1,16 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, TextInput } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
 }
 
 // Word Morph: change one letter at a time to reach the target word
@@ -60,39 +62,87 @@ function isOneLetterChange(a: string, b: string): boolean {
   return diff === 1;
 }
 
-export function WordMorphGame({ onComplete, onBack, savedStateJSON }: Props) {
-  const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
+interface SaveState {
+  puzIdx: number;
+  chain: string[];
+}
 
+export function WordMorphGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
+  const colors = useTheme();
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
-  const [puzIdx, setPuzIdx] = useState<number>(() => saved?.puzIdx ?? 0);
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SaveState>('word-morph');
+
+  const [puzIdx, setPuzIdx] = useState<number>(0);
   const puz = PUZZLES[puzIdx];
 
-  const [chain, setChain] = useState<string[]>(() => saved?.chain ?? [puz.start]);
+  const [chain, setChain] = useState<string[]>(() => [puz.start]);
   const [input, setInput] = useState('');
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
 
-  useSaveGame('word-morph', () => ({ puzIdx, chain }), !done, [puzIdx, chain], elapsedRef);
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SaveState | null>(null);
+
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Mount effect: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    (async () => {
+      const result = await load();
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        timer.start();
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Save effect
+  useEffect(() => {
+    if (!done && !showResumeModal) {
+      save({ puzIdx, chain }, timer.elapsedSeconds);
+    }
+  }, [puzIdx, chain, timer.elapsedSeconds, done, showResumeModal, save]);
+
+  const handleResume = useCallback(() => {
+    if (pendingSavedState) {
+      setPuzIdx(pendingSavedState.puzIdx);
+      setChain(pendingSavedState.chain);
+    }
+    setShowResumeModal(false);
+    timer.restoreAndResume(resumeElapsed);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    clear();
+    setPuzIdx(0);
+    setChain([PUZZLES[0].start]);
+    setInput('');
+    setError('');
+    setShowResumeModal(false);
+    timer.start();
+  }, [clear, timer]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    timer.pause();
+    clear();
     setWon(w);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer, clear]);
 
   const handleSubmit = useCallback(() => {
     const word = input.trim().toUpperCase();
@@ -128,6 +178,16 @@ export function WordMorphGame({ onComplete, onBack, savedStateJSON }: Props) {
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🔄"
+        gameName="Word Morph"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `${pendingSavedState.chain.join(' → ')}` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <Text style={s.title}>Word Morph</Text>
       <Text style={s.subtitle}>Change one letter at a time · Reach the target</Text>
 
@@ -186,13 +246,12 @@ export function WordMorphGame({ onComplete, onBack, savedStateJSON }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
               const next = (puzIdx + 1) % PUZZLES.length;
               setPuzIdx(next);
               setChain([PUZZLES[next].start]);
               setInput(''); setError('');
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Next Puzzle</Text>
             </TouchableOpacity>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, Dimensions } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
@@ -6,49 +6,101 @@ import { solvedGrid, shuffle, isSolved, findEmpty } from './generator';
 import type { TileGrid } from './types';
 import { useProgressStore } from '../../store/useProgressStore';
 import * as Haptics from 'expo-haptics';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
+
+interface SlidingPuzzleSaveState {
+  grid: TileGrid;
+  moves: number;
+}
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
 }
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const GRID_SIZE = Math.min(SCREEN_W - 48, 320);
 const CELL = GRID_SIZE / 4;
 
-export function SlidingPuzzleGame({ onComplete, onBack, savedStateJSON }: Props) {
+export function SlidingPuzzleGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
   const { levels, setGameLevel } = useProgressStore();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
 
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SlidingPuzzleSaveState>('sliding-puzzle');
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SlidingPuzzleSaveState | null>(null);
+
   const [level, setLevel] = useState(() => levels['sliding-puzzle'] ?? 1);
   const shuffleMoves = Math.min(50 + (level - 1) * 75, 300);
-  const [grid, setGrid] = useState<TileGrid>(() => saved?.grid ?? shuffle(solvedGrid(), shuffleMoves));
-  const [moves, setMoves] = useState<number>(() => saved?.moves ?? 0);
+  const [grid, setGrid] = useState<TileGrid>(() => shuffle(solvedGrid(), shuffleMoves));
+  const [moves, setMoves] = useState<number>(0);
   const [done, setDone] = useState(false);
-
-  useSaveGame('sliding-puzzle', () => ({ grid, moves }), !done, [grid], elapsedRef);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 
-  useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  const initNewGame = useCallback((lv: number) => {
+    const sm = Math.min(50 + (lv - 1) * 75, 300);
+    setGrid(shuffle(solvedGrid(), sm));
+    setMoves(0);
+    setDone(false);
   }, []);
 
+  useEffect(() => {
+    const checkSaved = async () => {
+      const result = await load();
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        initNewGame(levels['sliding-puzzle'] ?? 1);
+        timer.start();
+      }
+    };
+    checkSaved();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (done) { clear(); return; }
+    save({ grid, moves }, timer.elapsedSeconds);
+  }, [grid]);
+
+  const handleResume = useCallback(() => {
+    setShowResumeModal(false);
+    if (pendingSavedState) {
+      setGrid(pendingSavedState.grid);
+      setMoves(pendingSavedState.moves);
+    }
+    timer.restoreAndResume(resumeElapsed);
+    setPendingSavedState(null);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    setShowResumeModal(false);
+    clear();
+    initNewGame(levels['sliding-puzzle'] ?? 1);
+    timer.start();
+    setPendingSavedState(null);
+  }, [clear, timer, initNewGame, levels]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer]);
 
   const handleTap = useCallback((r: number, c: number) => {
     if (grid[r][c] === null) return;
@@ -68,6 +120,15 @@ export function SlidingPuzzleGame({ onComplete, onBack, savedStateJSON }: Props)
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🧩"
+        gameName="Sliding Puzzle"
+        elapsedSeconds={resumeElapsed}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 }}>
         <Text style={s.title}>Sliding Puzzle</Text>
         <View style={[s.levelBadge, { backgroundColor: colors.visual.bg }]}>
@@ -121,15 +182,10 @@ export function SlidingPuzzleGame({ onComplete, onBack, savedStateJSON }: Props)
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
               const nextLevel = level + 1;
-              const nextShuffleMoves = Math.min(50 + (nextLevel - 1) * 75, 300);
-              setDone(false);
-              completedRef.current = false;
               setLevel(nextLevel);
               setGameLevel('sliding-puzzle', nextLevel);
-              setGrid(shuffle(solvedGrid(), nextShuffleMoves));
-              setMoves(0);
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              initNewGame(nextLevel);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Next Level</Text>
             </TouchableOpacity>

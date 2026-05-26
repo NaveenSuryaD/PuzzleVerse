@@ -1,16 +1,24 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, Dimensions } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { useProgressStore } from '../../store/useProgressStore';
-import { useSaveGame } from '../../utils/gameSave';
 import * as Haptics from 'expo-haptics';
 import { useSettingsStore } from '../../store/useSettingsStore';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
+
+interface MemoryMatchSaveState {
+  cards: string[];
+  matched: number[];
+  moves: number;
+}
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
 }
 
 const ALL_EMOJIS = ['🐶','🐱','🐭','🐹','🦊','🐻','🐼','🦁','🐸','🦄','🐯','🦋','🐧','🦜','🐠','🦕'];
@@ -40,43 +48,97 @@ function starThreshold(pairs: number, moves: number): number {
   return 1;
 }
 
-export function MemoryMatchGame({ onComplete, onBack, savedStateJSON }: Props) {
+export function MemoryMatchGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
   const hapticsEnabled = useSettingsStore(st => st.hapticsEnabled);
   const { levels, setGameLevel } = useProgressStore();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
 
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<MemoryMatchSaveState>('memory-match');
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<MemoryMatchSaveState | null>(null);
+
   const [level, setLevel] = useState(() => Math.min(levels['memory-match'] ?? 1, LEVEL_CONFIG.length));
   const [gameKey, setGameKey] = useState(0);
 
   const cfg = LEVEL_CONFIG[Math.min(level - 1, LEVEL_CONFIG.length - 1)];
   const CELL = Math.min(Math.floor((SCREEN_W - 48) / cfg.cols), 72);
 
-  const cards = useMemo(
-    () => {
-      if (saved?.cards && gameKey === 0) return saved.cards as string[];
-      const emojis = ALL_EMOJIS.slice(0, cfg.pairs);
-      return shuffle([...emojis, ...emojis]);
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [gameKey, cfg.pairs],
-  );
+  const [cards, setCards] = useState<string[]>(() => {
+    const emojis = ALL_EMOJIS.slice(0, cfg.pairs);
+    return shuffle([...emojis, ...emojis]);
+  });
 
   const [preview, setPreview] = useState(true);
   const [countdown, setCountdown] = useState(PREVIEW_SECONDS);
   const [flipped, setFlipped] = useState<Set<number>>(new Set());
-  const [matched, setMatched] = useState<Set<number>>(() => new Set(saved?.matched ?? []));
-  const [moves, setMoves] = useState<number>(() => saved?.moves ?? 0);
+  const [matched, setMatched] = useState<Set<number>>(new Set());
+  const [moves, setMoves] = useState<number>(0);
   const [checking, setChecking] = useState(false);
   const [done, setDone] = useState(false);
   const [finalMoves, setFinalMoves] = useState(0);
 
-  useSaveGame('memory-match', () => ({ cards, matched: [...matched], moves }), !done, [matched, moves], elapsedRef);
   const s = useMemo(() => makeStyles(colors, CELL, cfg.cols), [colors, CELL, cfg.cols]);
+
+  const initNewGame = useCallback((lv: number) => {
+    const c = LEVEL_CONFIG[Math.min(lv - 1, LEVEL_CONFIG.length - 1)];
+    const emojis = ALL_EMOJIS.slice(0, c.pairs);
+    const newCards = shuffle([...emojis, ...emojis]);
+    setCards(newCards);
+    setFlipped(new Set());
+    setMatched(new Set());
+    setMoves(0);
+    setFinalMoves(0);
+    setDone(false);
+    setGameKey(k => k + 1);
+  }, []);
+
+  useEffect(() => {
+    const checkSaved = async () => {
+      const result = await load();
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        initNewGame(levels['memory-match'] ?? 1);
+      }
+    };
+    checkSaved();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (done) { clear(); return; }
+    save({ cards, matched: [...matched], moves }, timer.elapsedSeconds);
+  }, [matched, moves]);
+
+  const handleResume = useCallback(() => {
+    setShowResumeModal(false);
+    if (pendingSavedState) {
+      setCards(pendingSavedState.cards);
+      setMatched(new Set(pendingSavedState.matched));
+      setMoves(pendingSavedState.moves);
+    }
+    timer.restoreAndResume(resumeElapsed);
+    setPendingSavedState(null);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    setShowResumeModal(false);
+    clear();
+    initNewGame(levels['memory-match'] ?? 1);
+    setPendingSavedState(null);
+  }, [clear, initNewGame, levels]);
 
   useEffect(() => {
     setPreview(true);
@@ -87,7 +149,7 @@ export function MemoryMatchGame({ onComplete, onBack, savedStateJSON }: Props) {
         if (c <= 1) {
           clearInterval(countInterval);
           setPreview(false);
-          timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+          timer.start();
           return 0;
         }
         return c - 1;
@@ -96,18 +158,14 @@ export function MemoryMatchGame({ onComplete, onBack, savedStateJSON }: Props) {
 
     return () => {
       clearInterval(countInterval);
-      if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [gameKey]);
 
   const finish = useCallback((w: boolean, finalMovesCount: number) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
     setFinalMoves(finalMovesCount);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer]);
 
   const handleTap = useCallback((idx: number) => {
     if (preview || checking || flipped.has(idx) || matched.has(idx)) return;
@@ -144,36 +202,29 @@ export function MemoryMatchGame({ onComplete, onBack, savedStateJSON }: Props) {
 
   const startNextLevel = useCallback(() => {
     const nextLevel = Math.min(level + 1, LEVEL_CONFIG.length);
-    setDone(false);
-    completedRef.current = false;
-    setFlipped(new Set());
-    setMatched(new Set());
-    setMoves(0);
-    setFinalMoves(0);
-    elapsedRef.current = 0;
-    if (timerRef.current) clearInterval(timerRef.current);
     setLevel(nextLevel);
     setGameLevel('memory-match', nextLevel);
-    setGameKey(k => k + 1);
-  }, [level, setGameLevel]);
+    initNewGame(nextLevel);
+  }, [level, setGameLevel, initNewGame]);
 
   const playAgain = useCallback(() => {
-    setDone(false);
-    completedRef.current = false;
-    setFlipped(new Set());
-    setMatched(new Set());
-    setMoves(0);
-    setFinalMoves(0);
-    elapsedRef.current = 0;
-    if (timerRef.current) clearInterval(timerRef.current);
-    setGameKey(k => k + 1);
-  }, []);
+    initNewGame(level);
+  }, [level, initNewGame]);
 
   const stars = starThreshold(cfg.pairs, finalMoves);
   const isMaxLevel = level >= LEVEL_CONFIG.length;
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🧠"
+        gameName="Memory Match"
+        elapsedSeconds={resumeElapsed}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       {/* Header */}
       <View style={s.header}>
         <Text style={s.moveCount}>Moves: {moves}</Text>
@@ -227,7 +278,7 @@ export function MemoryMatchGame({ onComplete, onBack, savedStateJSON }: Props) {
               ))}
             </View>
 
-            <Text style={s.modalSub}>{finalMoves} moves · {elapsedRef.current}s</Text>
+            <Text style={s.modalSub}>{finalMoves} moves · {timer.elapsedSeconds}s</Text>
             <Text style={s.ratingLabel}>
               {stars === 3 ? 'Perfect memory!' : stars === 2 ? 'Well done!' : 'Keep practicing!'}
             </Text>

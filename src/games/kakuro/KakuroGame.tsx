@@ -1,16 +1,23 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { KAKURO_PUZZLES } from './puzzles';
 import type { KakuroGrid } from './types';
 import * as Haptics from 'expo-haptics';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
+}
+
+interface SaveState {
+  puzzleIdx: number;
+  grid: KakuroGrid;
 }
 
 function acrossRunCells(grid: KakuroGrid, r: number, c: number): [number, number][] {
@@ -44,39 +51,80 @@ function computeConflicts(grid: KakuroGrid): Set<string> {
   return conflicts;
 }
 
-export function KakuroGame({ onComplete, onBack, savedStateJSON }: Props) {
+export function KakuroGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
-
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
-  const [puzzleIdx, setPuzzleIdx] = useState<number>(() => saved?.puzzleIdx ?? 0);
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SaveState>('kakuro');
+
+  const [puzzleIdx, setPuzzleIdx] = useState<number>(0);
   const [grid, setGrid] = useState<KakuroGrid>(() =>
-    saved?.grid ?? KAKURO_PUZZLES[0].map(row => row.map(c => ({ ...c })))
+    KAKURO_PUZZLES[0].map(row => row.map(c => ({ ...c })))
   );
   const [selected, setSelected] = useState<[number, number] | null>(null);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
   const [conflicts, setConflicts] = useState<Set<string>>(new Set());
 
-  useSaveGame('kakuro', () => ({ puzzleIdx, grid }), !done, [puzzleIdx, grid], elapsedRef);
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SaveState | null>(null);
+
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Mount: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    load().then(result => {
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        timer.start();
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Save on meaningful changes
+  useEffect(() => {
+    if (!done && timer.isRunning) {
+      save({ puzzleIdx, grid }, timer.elapsedSeconds);
+    }
+  }, [grid]);
+
+  const handleResume = useCallback(() => {
+    if (!pendingSavedState) return;
+    setPuzzleIdx(pendingSavedState.puzzleIdx);
+    setGrid(pendingSavedState.grid);
+    setConflicts(computeConflicts(pendingSavedState.grid));
+    setShowResumeModal(false);
+    timer.restoreAndResume(resumeElapsed);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    clear();
+    setPuzzleIdx(0);
+    setGrid(KAKURO_PUZZLES[0].map(row => row.map(c => ({ ...c }))));
+    setConflicts(new Set());
+    setShowResumeModal(false);
+    timer.start();
+  }, [clear, timer]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    clear();
+    timer.pause();
     setWon(w);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, clear, timer]);
 
   const checkSolved = useCallback((g: KakuroGrid) => {
     const allFilled = g.every(row => row.every(c => c.type !== 'white' || c.value !== null));
@@ -113,6 +161,15 @@ export function KakuroGame({ onComplete, onBack, savedStateJSON }: Props) {
 
   return (
     <ScrollView contentContainerStyle={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🔢"
+        gameName="Kakuro"
+        elapsedSeconds={resumeElapsed}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <Text style={s.title}>Kakuro Puzzle {puzzleIdx + 1}</Text>
       <Text style={s.subtitle}>Fill cells so each run sums to its clue · No repeats</Text>
 
@@ -190,14 +247,12 @@ export function KakuroGame({ onComplete, onBack, savedStateJSON }: Props) {
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
               setDone(false);
-              completedRef.current = false;
               const next = (puzzleIdx + 1) % KAKURO_PUZZLES.length;
               setPuzzleIdx(next);
               setGrid(KAKURO_PUZZLES[next].map(row => row.map(c => ({ ...c }))));
               setSelected(null);
               setConflicts(new Set());
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Next Puzzle</Text>
             </TouchableOpacity>

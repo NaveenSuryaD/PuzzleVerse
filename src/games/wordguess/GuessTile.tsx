@@ -171,6 +171,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   letter: {
+    width: TILE_SIZE,
     fontSize: 22,
     fontFamily: fonts.black,
     textAlign: 'center',

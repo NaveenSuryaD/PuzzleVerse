@@ -1,14 +1,16 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
 }
 
 // Shikaku: divide grid into rectangles, each containing exactly one number
@@ -40,43 +42,90 @@ function rectContains(r1: number, c1: number, r2: number, c2: number, r: number,
   return r >= r1 && r <= r2 && c >= c1 && c <= c2;
 }
 
-export function ShikakuGame({ onComplete, onBack, savedStateJSON }: Props) {
-  const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
+interface RectItem {
+  r1: number; c1: number; r2: number; c2: number; color: string;
+}
 
+interface SaveState {
+  rects: RectItem[];
+}
+
+export function ShikakuGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
+  const colors = useTheme();
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SaveState>('shikaku');
+
   const puz = PUZZLES[0];
   const ROWS = puz.rows, COLS = puz.cols;
 
   const [selecting, setSelecting] = useState<{ r: number; c: number } | null>(null);
-  const [rects, setRects] = useState<Array<{ r1: number; c1: number; r2: number; c2: number; color: string }>>(() => saved?.rects ?? []);
+  const [rects, setRects] = useState<RectItem[]>([]);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
 
-  useSaveGame('shikaku', () => ({ rects }), !done, [rects], elapsedRef);
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SaveState | null>(null);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 
   const RECT_COLORS = ['#E74C3C','#3498DB','#2ECC71','#F1C40F','#9B59B6','#E67E22','#1ABC9C','#E91E63'];
 
+  // Mount effect: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    (async () => {
+      const result = await load();
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        timer.start();
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Save effect
+  useEffect(() => {
+    if (!done && !showResumeModal) {
+      save({ rects }, timer.elapsedSeconds);
+    }
+  }, [rects, timer.elapsedSeconds, done, showResumeModal, save]);
+
+  const handleResume = useCallback(() => {
+    if (pendingSavedState) {
+      setRects(pendingSavedState.rects);
+    }
+    setShowResumeModal(false);
+    timer.restoreAndResume(resumeElapsed);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    clear();
+    setRects([]);
+    setSelecting(null);
+    setShowResumeModal(false);
+    timer.start();
+  }, [clear, timer]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    timer.pause();
+    clear();
     setWon(w);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer, clear]);
 
-  const checkSolution = useCallback((newRects: typeof rects) => {
+  const checkSolution = useCallback((newRects: RectItem[]) => {
     // Each clue cell must be covered by exactly one rect whose area equals the clue
     for (const clue of puz.clues) {
       const covering = newRects.filter(rect =>
@@ -125,6 +174,16 @@ export function ShikakuGame({ onComplete, onBack, savedStateJSON }: Props) {
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🔲"
+        gameName="Shikaku"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `${pendingSavedState.rects.length} rectangles placed` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <Text style={s.title}>Shikaku</Text>
       <Text style={s.subtitle}>Divide into rectangles · Each number = rectangle area</Text>
 
@@ -172,10 +231,9 @@ export function ShikakuGame({ onComplete, onBack, savedStateJSON }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
               setRects([]); setSelecting(null);
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Play Again</Text>
             </TouchableOpacity>

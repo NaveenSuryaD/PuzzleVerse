@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, Dimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/useTheme';
@@ -6,48 +6,93 @@ import { fonts } from '../../theme/typography';
 import { generateMaze, getMazeSize, type MazeData } from './generator';
 import { useProgressStore } from '../../store/useProgressStore';
 import * as Haptics from 'expo-haptics';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
+}
+
+interface SaveState {
+  maze: MazeData;
+  pos: [number, number];
 }
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
-export function MazeRunnerGame({ onComplete, onBack, savedStateJSON }: Props) {
+export function MazeRunnerGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
   const { levels, setGameLevel } = useProgressStore();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
 
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
-  const [level, setLevel] = useState(() => levels['maze-runner'] ?? 1);
-  const [maze, setMaze] = useState<MazeData>(() => saved?.maze ?? generateMaze(levels['maze-runner'] ?? 1));
-  const [pos, setPos] = useState<[number, number]>(() => (saved?.pos as [number,number]) ?? [1, 1]);
-  const [done, setDone] = useState(false);
+  }, [paused]);
 
-  useSaveGame('maze-runner', () => ({ maze, pos }), !done, [pos], elapsedRef);
+  const { save, load, clear } = usePersistentGameState<SaveState>('maze-runner');
+
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SaveState | null>(null);
+
+  const [level, setLevel] = useState(() => levels['maze-runner'] ?? 1);
+  const [maze, setMaze] = useState<MazeData>(() => generateMaze(levels['maze-runner'] ?? 1));
+  const [pos, setPos] = useState<[number, number]>([1, 1]);
+  const [done, setDone] = useState(false);
 
   const cellSize = Math.min(Math.floor((SCREEN_W - 48) / getMazeSize(level)), 28);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Mount effect: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    load().then(result => {
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        timer.start();
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Save effect: save on state changes
+  useEffect(() => {
+    if (!done) {
+      save({ maze, pos }, timer.elapsedSeconds);
+    }
+  }, [pos, done, maze, timer.elapsedSeconds, save]);
+
+  const handleResume = useCallback(() => {
+    if (pendingSavedState) {
+      setMaze(pendingSavedState.maze);
+      setPos(pendingSavedState.pos);
+    }
+    setShowResumeModal(false);
+    timer.restoreAndResume(resumeElapsed);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    clear();
+    setShowResumeModal(false);
+    timer.start();
+  }, [clear, timer]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    timer.pause();
+    clear();
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer, clear]);
 
   const move = useCallback((dr: number, dc: number) => {
     setPos(prev => {
@@ -64,6 +109,16 @@ export function MazeRunnerGame({ onComplete, onBack, savedStateJSON }: Props) {
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🌀"
+        gameName="Maze Runner"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `Level ${level}` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 }}>
         <Text style={s.title}>Maze Runner</Text>
         <View style={[s.levelBadge, { backgroundColor: colors.visual.bg }]}>
@@ -128,7 +183,7 @@ export function MazeRunnerGame({ onComplete, onBack, savedStateJSON }: Props) {
           <View style={s.modal}>
             <Text style={s.modalEmoji}>🏃</Text>
             <Text style={s.modalTitle}>Escaped!</Text>
-            <Text style={s.modalSub}>Level {level} · Time: {elapsedRef.current}s</Text>
+            <Text style={s.modalSub}>Level {level} · Time: {timer.elapsedSeconds}s</Text>
             {onBack && (
               <TouchableOpacity
                 style={[s.modalBtn, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: colors.rule, marginTop: 8 }]}
@@ -139,24 +194,22 @@ export function MazeRunnerGame({ onComplete, onBack, savedStateJSON }: Props) {
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
               const nextLevel = level + 1;
-              setDone(false); completedRef.current = false;
+              setDone(false);
               setLevel(nextLevel);
               setGameLevel('maze-runner', nextLevel);
               const nextMaze = generateMaze(nextLevel);
               setMaze(nextMaze);
               setPos([1, 1]);
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Next Level →</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[s.modalBtn, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: colors.rule, marginTop: 8 }]} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
               const newMaze = generateMaze(level);
               setMaze(newMaze);
               setPos([1, 1]);
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={[s.modalBtnText, { color: colors.inkSoft }]}>Replay</Text>
             </TouchableOpacity>

@@ -1,14 +1,15 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, Dimensions } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
 }
 
 const SIZE = 10;
@@ -65,37 +66,40 @@ function aiMove(board: Cell[][]): [number, number] {
   return moves[Math.floor(Math.random() * moves.length)] ?? [0, 0];
 }
 
-export function NoughtsCrossesGame({ onComplete, onBack, savedStateJSON }: Props) {
+export function NoughtsCrossesGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
-
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<{ board: Cell[][]; turn: 'X' | 'O' }>('noughts-crosses');
+
   const [board, setBoard] = useState<Cell[][]>(() =>
-    saved?.board ?? Array.from({ length: SIZE }, () => Array(SIZE).fill(null))
+    Array.from({ length: SIZE }, () => Array(SIZE).fill(null))
   );
-  const [turn, setTurn] = useState<'X' | 'O'>(() => saved?.turn ?? 'X');
+  const [turn, setTurn] = useState<'X' | 'O'>('X');
   const [winner, setWinner] = useState<'X' | 'O' | null>(null);
   const [done, setDone] = useState(false);
 
-  useSaveGame('noughts-crosses', () => ({ board, turn }), !done, [board, turn], elapsedRef);
-
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Mount: quick game — skip resume modal, just start timer
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    timer.start();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    clear();
+    timer.pause();
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, clear, timer]);
 
   const handleTap = useCallback((r: number, c: number) => {
     if (board[r][c] || turn !== 'X' || winner) return;
@@ -159,11 +163,10 @@ export function NoughtsCrossesGame({ onComplete, onBack, savedStateJSON }: Props
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
               setBoard(Array.from({ length: SIZE }, () => Array(SIZE).fill(null)));
               setTurn('X'); setWinner(null);
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Play Again</Text>
             </TouchableOpacity>

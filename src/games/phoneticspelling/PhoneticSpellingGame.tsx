@@ -1,14 +1,16 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
 }
 
 // Alternative words for each letter — used as plausible wrong options
@@ -83,23 +85,36 @@ function shuffle<T>(arr: T[]): T[] {
 
 type Mode = 'letterToWord' | 'wordToLetter';
 
-export function PhoneticSpellingGame({ onComplete, onBack, savedStateJSON }: Props) {
-  const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
+interface SavedState {
+  questions: typeof NATO;
+  round: number;
+  score: number;
+}
 
+export function PhoneticSpellingGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
+  const colors = useTheme();
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
-  const [questions] = useState<typeof NATO>(() => saved?.questions ?? shuffle([...NATO]).slice(0, 10));
-  const [round, setRound] = useState<number>(() => saved?.round ?? 0);
-  const [score, setScore] = useState<number>(() => saved?.score ?? 0);
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SavedState>('phonetic-spelling');
+
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SavedState | null>(null);
+
+  const [questions, setQuestions] = useState<typeof NATO>(() => shuffle([...NATO]).slice(0, 10));
+  const [round, setRound] = useState<number>(0);
+  const [score, setScore] = useState<number>(0);
   const [chosen, setChosen] = useState<string | null>(null);
   const [mode] = useState<Mode>('letterToWord');
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
-
-  useSaveGame('phonetic-spelling', () => ({ questions, round, score }), !done, [round, score], elapsedRef);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
   const current = questions[round];
@@ -116,19 +131,56 @@ export function PhoneticSpellingGame({ onComplete, onBack, savedStateJSON }: Pro
     return shuffle([current.word, ...padded]);
   }, [current]);
 
+  // Mount effect: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    load().then(result => {
+      if (result.found && result.gameState) {
+        setResumeElapsed(result.elapsedSeconds);
+        setPendingSavedState(result.gameState);
+        setShowResumeModal(true);
+        timer.pause();
+      } else {
+        timer.start();
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Save effect
+  useEffect(() => {
+    if (!done) {
+      save({ questions, round, score }, timer.elapsedSeconds);
+    }
+  }, [round, score, done, save, timer.elapsedSeconds, questions]);
+
+  const handleResume = useCallback(() => {
+    setShowResumeModal(false);
+    if (pendingSavedState) {
+      setQuestions(pendingSavedState.questions);
+      setRound(pendingSavedState.round);
+      setScore(pendingSavedState.score);
+    }
+    timer.restoreAndResume(resumeElapsed);
+    setPendingSavedState(null);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    setShowResumeModal(false);
+    setPendingSavedState(null);
+    clear();
+    setQuestions(shuffle([...NATO]).slice(0, 10));
+    setRound(0);
+    setScore(0);
+    setChosen(null);
+    timer.start();
+  }, [clear, timer]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    clear();
     setWon(w);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer.elapsedSeconds, clear]);
 
   const handleChoice = useCallback((word: string) => {
     if (chosen !== null) return;
@@ -149,6 +201,16 @@ export function PhoneticSpellingGame({ onComplete, onBack, savedStateJSON }: Pro
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🔊"
+        gameName="Phonetic Spelling"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `Round ${pendingSavedState.round + 1} / ${pendingSavedState.questions.length}  ·  Score: ${pendingSavedState.score}` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <Text style={s.round}>Round {round+1} / {questions.length}  ·  Score: {score}</Text>
       <Text style={s.instruction}>NATO phonetic word for this letter?</Text>
 
@@ -195,10 +257,10 @@ export function PhoneticSpellingGame({ onComplete, onBack, savedStateJSON }: Pro
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
+              setQuestions(shuffle([...NATO]).slice(0, 10));
               setRound(0); setScore(0); setChosen(null);
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Play Again</Text>
             </TouchableOpacity>

@@ -1,14 +1,16 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
 }
 
 // Mirror Puzzle: tap cells to toggle; left half auto-mirrors to right half
@@ -45,30 +47,83 @@ const PUZZLES = [
 
 const CELL_SIZE = 60;
 
-export function MirrorPuzzleGame({ onComplete, onBack, savedStateJSON }: Props) {
-  const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
+interface SavedState {
+  puzIdx: number;
+  left: number[][];
+}
 
+export function MirrorPuzzleGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
+  const colors = useTheme();
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
-  const [puzIdx, setPuzIdx] = useState<number>(() => saved?.puzIdx ?? 0);
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SavedState>('mirror-puzzle');
+
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SavedState | null>(null);
+
+  const [puzIdx, setPuzIdx] = useState<number>(0);
   const puz = PUZZLES[puzIdx];
   const SIZE = puz.size;
   const HALF = Math.floor(SIZE / 2);
 
   // User controls only left half; right half mirrors it
   const [left, setLeft] = useState<number[][]>(() =>
-    saved?.left ?? Array.from({ length: SIZE }, () => Array(HALF).fill(0))
+    Array.from({ length: SIZE }, () => Array(HALF).fill(0))
   );
+
+  const [done, setDone] = useState(false);
+  const [won, setWon] = useState(false);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Mount effect: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    load().then(result => {
+      if (result.found && result.gameState) {
+        setResumeElapsed(result.elapsedSeconds);
+        setPendingSavedState(result.gameState);
+        setShowResumeModal(true);
+        timer.pause();
+      } else {
+        timer.start();
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Save effect
+  useEffect(() => {
+    if (!done) {
+      save({ puzIdx, left }, timer.elapsedSeconds);
+    }
+  }, [puzIdx, left, done, save, timer.elapsedSeconds]);
+
+  const handleResume = useCallback(() => {
+    setShowResumeModal(false);
+    if (pendingSavedState) {
+      setPuzIdx(pendingSavedState.puzIdx);
+      setLeft(pendingSavedState.left);
+    }
+    timer.restoreAndResume(resumeElapsed);
+    setPendingSavedState(null);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    setShowResumeModal(false);
+    setPendingSavedState(null);
+    clear();
+    setPuzIdx(0);
+    setLeft(Array.from({ length: SIZE }, () => Array(HALF).fill(0)));
+    timer.start();
+  }, [clear, SIZE, HALF, timer]);
 
   // Reset when puzzle changes
   useEffect(() => {
@@ -76,18 +131,11 @@ export function MirrorPuzzleGame({ onComplete, onBack, savedStateJSON }: Props) 
   }, [puzIdx, SIZE, HALF]);
 
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    clear();
     setDone(true);
     setWon(w);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
-
-  const [done, setDone] = useState(false);
-  const [won, setWon] = useState(false);
-
-  useSaveGame('mirror-puzzle', () => ({ puzIdx, left }), !done, [puzIdx, left], elapsedRef);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer.elapsedSeconds, clear]);
 
   // Build full grid with mirror
   const fullGrid = useMemo(() => {
@@ -123,6 +171,15 @@ export function MirrorPuzzleGame({ onComplete, onBack, savedStateJSON }: Props) 
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🪞"
+        gameName="Mirror Puzzle"
+        elapsedSeconds={resumeElapsed}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <Text style={s.title}>Mirror Puzzle</Text>
       <Text style={s.subtitle}>Tap left side · Right side mirrors · Match the target</Text>
 
@@ -185,11 +242,10 @@ export function MirrorPuzzleGame({ onComplete, onBack, savedStateJSON }: Props) 
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
               const next = (puzIdx + 1) % PUZZLES.length;
               setPuzIdx(next);
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Next Puzzle</Text>
             </TouchableOpacity>

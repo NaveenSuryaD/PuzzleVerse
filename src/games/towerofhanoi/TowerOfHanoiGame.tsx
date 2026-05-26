@@ -1,15 +1,22 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, Dimensions } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { useProgressStore } from '../../store/useProgressStore';
 import * as Haptics from 'expo-haptics';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
+
+interface TowerOfHanoiSaveState {
+  pegs: number[][];
+  moves: number;
+}
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
 }
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -25,41 +32,87 @@ function initPegs(n: number): number[][] {
   return [discs, [], []];
 }
 
-export function TowerOfHanoiGame({ onComplete, onBack, savedStateJSON }: Props) {
+export function TowerOfHanoiGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
   const { levels, setGameLevel } = useProgressStore();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
 
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<TowerOfHanoiSaveState>('tower-of-hanoi');
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<TowerOfHanoiSaveState | null>(null);
+
   const [level, setLevel] = useState(() => levels['tower-of-hanoi'] ?? 1);
   const initDiscs = Math.min(3 + ((levels['tower-of-hanoi'] ?? 1) - 1), 7);
   const [discCount, setDiscCount] = useState(initDiscs);
-  const [pegs, setPegs] = useState<number[][]>(() => saved?.pegs ?? initPegs(initDiscs));
+  const [pegs, setPegs] = useState<number[][]>(() => initPegs(initDiscs));
   const [selected, setSelected] = useState<number | null>(null);
-  const [moves, setMoves] = useState<number>(() => saved?.moves ?? 0);
+  const [moves, setMoves] = useState<number>(0);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
 
-  useSaveGame('tower-of-hanoi', () => ({ pegs, moves }), !done, [pegs], elapsedRef);
-
   const s = useMemo(() => makeStyles(colors), [colors]);
 
-  useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  const initNewGame = useCallback((dc: number) => {
+    setPegs(initPegs(dc));
+    setSelected(null);
+    setMoves(0);
+    setDone(false);
+    setWon(false);
   }, []);
 
+  useEffect(() => {
+    const checkSaved = async () => {
+      const result = await load();
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        initNewGame(initDiscs);
+        timer.start();
+      }
+    };
+    checkSaved();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (done) { clear(); return; }
+    save({ pegs, moves }, timer.elapsedSeconds);
+  }, [pegs]);
+
+  const handleResume = useCallback(() => {
+    setShowResumeModal(false);
+    if (pendingSavedState) {
+      setPegs(pendingSavedState.pegs);
+      setMoves(pendingSavedState.moves);
+    }
+    timer.restoreAndResume(resumeElapsed);
+    setPendingSavedState(null);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    setShowResumeModal(false);
+    clear();
+    initNewGame(initDiscs);
+    timer.start();
+    setPendingSavedState(null);
+  }, [clear, timer, initNewGame, initDiscs]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
     setWon(w);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer]);
 
   const checkWin = useCallback((newPegs: number[][]) => {
     // Win when all discs on peg 2 (rightmost)
@@ -96,6 +149,15 @@ export function TowerOfHanoiGame({ onComplete, onBack, savedStateJSON }: Props) 
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🗼"
+        gameName="Tower of Hanoi"
+        elapsedSeconds={resumeElapsed}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 }}>
         <Text style={s.title}>Tower of Hanoi</Text>
         <View style={[s.levelBadge, { backgroundColor: colors.visual.bg }]}>
@@ -159,28 +221,18 @@ export function TowerOfHanoiGame({ onComplete, onBack, savedStateJSON }: Props) 
               <TouchableOpacity style={s.modalBtn} onPress={() => {
                 const nextDiscs = Math.min(discCount + 1, 7);
                 const nextLevel = level + 1;
-                setDone(false);
-                completedRef.current = false;
                 setLevel(nextLevel);
                 setGameLevel('tower-of-hanoi', nextLevel);
                 setDiscCount(nextDiscs);
-                setPegs(initPegs(nextDiscs));
-                setSelected(null);
-                setMoves(0);
-                elapsedRef.current = 0;
-                timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+                initNewGame(nextDiscs);
+                timer.start();
               }}>
                 <Text style={s.modalBtnText}>Next Level →</Text>
               </TouchableOpacity>
             )}
             <TouchableOpacity style={[s.modalBtn, won && { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: colors.rule }]} onPress={() => {
-              setDone(false);
-              completedRef.current = false;
-              setPegs(initPegs(discCount));
-              setSelected(null);
-              setMoves(0);
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              initNewGame(discCount);
+              timer.start();
             }}>
               <Text style={[s.modalBtnText, won && { color: colors.inkSoft }]}>Play Again</Text>
             </TouchableOpacity>

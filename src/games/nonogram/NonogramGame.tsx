@@ -1,21 +1,28 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { NONOGRAM_PUZZLES } from './puzzles';
 import * as Haptics from 'expo-haptics';
 import { useSettingsStore } from '../../store/useSettingsStore';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
 }
 
 const CELL = 44;
 
 type CellState = 'filled' | 'empty' | 'unknown';
+
+interface SaveState {
+  puzzleIdx: number;
+  grid: CellState[][];
+}
 
 function getRowBlocks(row: CellState[]): number[] {
   const blocks: number[] = [];
@@ -36,42 +43,80 @@ function isClueSatisfied(row: CellState[], clue: number[]): boolean {
   return blocks.length === clue.length && blocks.every((b, i) => b === clue[i]);
 }
 
-export function NonogramGame({ onComplete, onBack, savedStateJSON }: Props) {
+export function NonogramGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
   const hapticsEnabled = useSettingsStore(st => st.hapticsEnabled);
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
 
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
-  const [puzzleIdx, setPuzzleIdx] = useState<number>(() => saved?.puzzleIdx ?? 0);
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SaveState>('nonogram');
+
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SaveState | null>(null);
+
+  const [puzzleIdx, setPuzzleIdx] = useState<number>(0);
   const puzzle = NONOGRAM_PUZZLES[puzzleIdx];
   const N = puzzle.solution.length;
 
   const [grid, setGrid] = useState<CellState[][]>(() =>
-    saved?.grid ?? Array.from({ length: N }, () => Array(N).fill('unknown'))
+    Array.from({ length: N }, () => Array(N).fill('unknown'))
   );
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
 
-  useSaveGame('nonogram', () => ({ puzzleIdx, grid }), !done, [puzzleIdx, grid], elapsedRef);
-
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Mount effect: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    load().then(result => {
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        timer.start();
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Save effect: save on state changes
+  useEffect(() => {
+    if (!done) {
+      save({ puzzleIdx, grid }, timer.elapsedSeconds);
+    }
+  }, [puzzleIdx, grid, done, timer.elapsedSeconds, save]);
+
+  const handleResume = useCallback(() => {
+    if (pendingSavedState) {
+      setPuzzleIdx(pendingSavedState.puzzleIdx);
+      setGrid(pendingSavedState.grid);
+    }
+    setShowResumeModal(false);
+    timer.restoreAndResume(resumeElapsed);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    clear();
+    setShowResumeModal(false);
+    timer.start();
+  }, [clear, timer]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    timer.pause();
+    clear();
     setWon(w);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer, clear]);
 
   const checkSolved = useCallback((g: CellState[][]) => {
     const correct = g.every((row, ri) =>
@@ -120,6 +165,16 @@ export function NonogramGame({ onComplete, onBack, savedStateJSON }: Props) {
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🎨"
+        gameName="Nonogram"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `Puzzle: ${NONOGRAM_PUZZLES[pendingSavedState.puzzleIdx]?.name ?? ''}` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <Text style={s.title}>Nonogram: {puzzle.name}</Text>
       <Text style={s.subtitle}>Tap to fill · Long-press to mark ×</Text>
 
@@ -195,13 +250,11 @@ export function NonogramGame({ onComplete, onBack, savedStateJSON }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
               const next = (puzzleIdx + 1) % NONOGRAM_PUZZLES.length;
               setPuzzleIdx(next);
               setGrid(Array.from({ length: N }, () => Array(N).fill('unknown')));
-              elapsedRef.current = 0;
-              if (timerRef.current) clearInterval(timerRef.current);
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Next Puzzle</Text>
             </TouchableOpacity>

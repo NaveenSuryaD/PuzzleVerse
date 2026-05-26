@@ -10,14 +10,20 @@ import { initGame, move } from './generator';
 import type { GameState, Grid } from './types';
 import * as Haptics from 'expo-haptics';
 import { useSettingsStore } from '../../store/useSettingsStore';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 const BEST_SCORE_KEY = '2048-best-score';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
+}
+
+interface SaveState {
+  gameState: GameState;
 }
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -38,21 +44,30 @@ const TILE_COLORS: Record<number, { bg: string; ink: string }> = {
   2048: { bg: '#EDC22E', ink: '#FFFFFF' },
 };
 
-export function Game2048Game({ onComplete, onBack, savedStateJSON }: Props) {
+export function Game2048Game({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
   const hapticsEnabled = useSettingsStore(st => st.hapticsEnabled);
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completedRef = useRef(false);
 
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
-  const [gameState, setGameState] = useState<GameState>(() => saved?.gameState ?? initGame());
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SaveState>('game-2048');
+
+  const [gameState, setGameState] = useState<GameState>(() => initGame());
   const [undoStack, setUndoStack] = useState<GameState[]>([]);
   const [done, setDone] = useState(false);
   const [bestScore, setBestScore] = useState(0);
 
-  useSaveGame('game-2048', () => ({ gameState }), !done && !gameState.over, [gameState], elapsedRef);
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SaveState | null>(null);
 
   const prevGridRef = useRef<Grid>(gameState.grid);
 
@@ -69,11 +84,45 @@ export function Game2048Game({ onComplete, onBack, savedStateJSON }: Props) {
     });
   }, []);
 
-  // Timer
+  // Mount: check for saved game
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    load().then(result => {
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        timer.start();
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const handleResume = useCallback(() => {
+    setShowResumeModal(false);
+    if (pendingSavedState) {
+      setGameState(pendingSavedState.gameState);
+      prevGridRef.current = pendingSavedState.gameState.grid;
+    }
+    timer.restoreAndResume(resumeElapsed);
+    setPendingSavedState(null);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    setShowResumeModal(false);
+    setPendingSavedState(null);
+    clear();
+    timer.start();
+  }, [clear, timer]);
+
+  // Save effect
+  useEffect(() => {
+    if (done || gameState.over) {
+      clear();
+      return;
+    }
+    save({ gameState }, timer.elapsedSeconds);
+  }, [gameState, done]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist best score
   useEffect(() => {
@@ -82,7 +131,6 @@ export function Game2048Game({ onComplete, onBack, savedStateJSON }: Props) {
       AsyncStorage.setItem(BEST_SCORE_KEY, String(gameState.score));
     }
   }, [gameState.score, bestScore]);
-
 
   // Animate new tile pop-in and merged tile scale
   useEffect(() => {
@@ -117,10 +165,10 @@ export function Game2048Game({ onComplete, onBack, savedStateJSON }: Props) {
   const finish = useCallback((w: boolean) => {
     if (completedRef.current) return;
     completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    timer.pause();
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer]);
 
   useEffect(() => {
     if (gameState.won) finish(true);
@@ -171,14 +219,21 @@ export function Game2048Game({ onComplete, onBack, savedStateJSON }: Props) {
     setUndoStack([]);
     setDone(false);
     completedRef.current = false;
-    elapsedRef.current = 0;
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-  }, []);
+    timer.start();
+  }, [timer]);
 
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🔢"
+        gameName="2048"
+        elapsedSeconds={resumeElapsed}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       {/* Score bar */}
       <View style={s.scoreBar}>
         <View style={s.scoreBox}>

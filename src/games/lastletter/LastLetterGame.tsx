@@ -1,14 +1,16 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, TextInput } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
 }
 
 // Last Letter: chain words where each word starts with the last letter of the previous
@@ -47,38 +49,86 @@ const WORD_LIST = new Set([
   'ZAP','ZED','ZEN','ZIT','ZOO',
 ]);
 
-export function LastLetterGame({ onComplete, onBack, savedStateJSON }: Props) {
-  const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
+interface SavedState {
+  starterIdx: number;
+  chain: string[];
+}
 
+export function LastLetterGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
+  const colors = useTheme();
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
-  const [starterIdx] = useState<number>(() => saved?.starterIdx ?? Math.floor(Math.random() * STARTER_WORDS.length));
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SavedState>('last-letter');
+
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SavedState | null>(null);
+
+  const [starterIdx, setStarterIdx] = useState<number>(() => Math.floor(Math.random() * STARTER_WORDS.length));
   const starter = STARTER_WORDS[starterIdx];
-  const [chain, setChain] = useState<string[]>(() => saved?.chain ?? [starter]);
+  const [chain, setChain] = useState<string[]>([starter]);
   const [input, setInput] = useState('');
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
 
-  useSaveGame('last-letter', () => ({ starterIdx, chain }), !done, [chain], elapsedRef);
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Mount effect: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    load().then(result => {
+      if (result.found && result.gameState) {
+        setResumeElapsed(result.elapsedSeconds);
+        setPendingSavedState(result.gameState);
+        setShowResumeModal(true);
+        timer.pause();
+      } else {
+        timer.start();
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Save effect
+  useEffect(() => {
+    if (!done && chain.length > 1) {
+      save({ starterIdx, chain }, timer.elapsedSeconds);
+    }
+  }, [chain, starterIdx, done, save, timer.elapsedSeconds]);
+
+  const handleResume = useCallback(() => {
+    setShowResumeModal(false);
+    if (pendingSavedState) {
+      setStarterIdx(pendingSavedState.starterIdx);
+      setChain(pendingSavedState.chain);
+    }
+    timer.restoreAndResume(resumeElapsed);
+    setPendingSavedState(null);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    setShowResumeModal(false);
+    setPendingSavedState(null);
+    clear();
+    const newIdx = Math.floor(Math.random() * STARTER_WORDS.length);
+    setStarterIdx(newIdx);
+    setChain([STARTER_WORDS[newIdx]]);
+    timer.start();
+  }, [clear, timer]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    clear();
     setWon(w);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer.elapsedSeconds, clear]);
 
   const lastWord = chain[chain.length - 1];
   const neededLetter = lastWord[lastWord.length - 1];
@@ -102,6 +152,16 @@ export function LastLetterGame({ onComplete, onBack, savedStateJSON }: Props) {
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🔤"
+        gameName="Last Letter"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `Chain: ${pendingSavedState.chain.length} / 10 words` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <Text style={s.title}>Last Letter</Text>
       <Text style={s.subtitle}>Each word must start with the last letter of the previous</Text>
       <Text style={s.progress}>Chain: {chain.length} / 10 words</Text>
@@ -156,12 +216,12 @@ export function LastLetterGame({ onComplete, onBack, savedStateJSON }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
-              const newStarter = STARTER_WORDS[Math.floor(Math.random() * STARTER_WORDS.length)];
-              setChain([newStarter]);
+              setDone(false);
+              const newIdx = Math.floor(Math.random() * STARTER_WORDS.length);
+              setStarterIdx(newIdx);
+              setChain([STARTER_WORDS[newIdx]]);
               setInput(''); setError('');
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Play Again</Text>
             </TouchableOpacity>

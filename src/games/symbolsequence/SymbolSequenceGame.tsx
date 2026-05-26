@@ -1,15 +1,17 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
 }
 
 type IconName = 'star' | 'heart' | 'moon' | 'sunny' | 'flash' | 'diamond';
@@ -23,37 +25,49 @@ const SYMBOLS: Array<{ icon: IconName; color: string }> = [
   { icon: 'diamond', color: '#2ECC71' },
 ];
 
-export function SymbolSequenceGame({ onComplete, onBack, savedStateJSON }: Props) {
-  const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
+interface SaveState {
+  round: number;
+}
 
+export function SymbolSequenceGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
+  const colors = useTheme();
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SaveState>('symbol-sequence');
+
   const [phase, setPhase] = useState<'show' | 'input' | 'result'>('show');
   const [sequence, setSequence] = useState<number[]>([]);
   const [playerInput, setPlayerInput] = useState<number[]>([]);
   const [showing, setShowing] = useState<number>(-1);
-  const [round, setRound] = useState<number>(() => saved?.round ?? 1);
+  const [round, setRound] = useState<number>(1);
   const [done, setDone] = useState(false);
 
-  useSaveGame('symbol-sequence', () => ({ round }), !done, [round], elapsedRef);
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SaveState | null>(null);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Save effect
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, []);
+    if (!done && !showResumeModal) {
+      save({ round }, timer.elapsedSeconds);
+    }
+  }, [round, timer.elapsedSeconds, done, showResumeModal, save]);
 
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    timer.pause();
+    clear();
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer, clear]);
 
   const startRound = useCallback((r: number) => {
     const newSeq = Array.from({ length: r + 3 }, () => Math.floor(Math.random() * SYMBOLS.length));
@@ -73,7 +87,40 @@ export function SymbolSequenceGame({ onComplete, onBack, savedStateJSON }: Props
     setTimeout(showNext, 500);
   }, []);
 
-  useEffect(() => { startRound(1); }, []);
+  // Mount effect: load saved state
+  useEffect(() => {
+    (async () => {
+      const result = await load();
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        timer.start();
+        startRound(1);
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleResume = useCallback(() => {
+    if (pendingSavedState) {
+      setRound(pendingSavedState.round);
+      setShowResumeModal(false);
+      timer.restoreAndResume(resumeElapsed);
+      startRound(pendingSavedState.round);
+    }
+  }, [pendingSavedState, resumeElapsed, timer, startRound]);
+
+  const handleStartFresh = useCallback(() => {
+    clear();
+    setRound(1);
+    setPlayerInput([]);
+    setPhase('show');
+    setShowResumeModal(false);
+    timer.start();
+    startRound(1);
+  }, [clear, timer, startRound]);
 
   const handleSymbolTap = useCallback((idx: number) => {
     if (phase !== 'input') return;
@@ -96,6 +143,16 @@ export function SymbolSequenceGame({ onComplete, onBack, savedStateJSON }: Props
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🔣"
+        gameName="Symbol Sequence"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `Round ${pendingSavedState.round}` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <Text style={s.round}>Round {round}  ·  Sequence length: {sequence.length}</Text>
       <Text style={s.status}>
         {phase === 'show' ? 'Watch the sequence...' :
@@ -154,10 +211,9 @@ export function SymbolSequenceGame({ onComplete, onBack, savedStateJSON }: Props
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
               setRound(1); setPlayerInput([]); setPhase('show');
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
               startRound(1);
             }}>
               <Text style={s.modalBtnText}>Play Again</Text>

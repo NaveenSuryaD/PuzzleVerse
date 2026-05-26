@@ -1,14 +1,16 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
 }
 
 // Wordsmiths Duel: player vs AI - take turns forming words from a shared letter pool
@@ -98,41 +100,91 @@ function getAIWord(pool: string): string | null {
   return valid[0];
 }
 
-export function WordsmithsDuelGame({ onComplete, onBack, savedStateJSON }: Props) {
-  const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
+interface SavedState {
+  pool: string;
+  playerWords: string[];
+}
 
+export function WordsmithsDuelGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
+  const colors = useTheme();
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
-  const [pool, setPool] = useState<string>(() => saved?.pool ?? shuffle(LETTER_POOLS[0].split('')).join(''));
-  const [playerWords, setPlayerWords] = useState<string[]>(() => saved?.playerWords ?? []);
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SavedState>('wordsmiths-duel');
+
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SavedState | null>(null);
+
+  const [pool, setPool] = useState<string>(() => shuffle(LETTER_POOLS[0].split('')).join(''));
+  const [playerWords, setPlayerWords] = useState<string[]>([]);
   const [aiWords, setAiWords] = useState<string[]>([]);
   const [selected, setSelected] = useState<number[]>([]); // indices in pool
   const [error, setError] = useState('');
   const [turn, setTurn] = useState<'player'|'ai'>('player');
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
-
-  useSaveGame('wordsmiths-duel', () => ({ pool, playerWords }), !done, [playerWords], elapsedRef);
   const [aiThinking, setAiThinking] = useState(false);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Mount effect: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    load().then(result => {
+      if (result.found && result.gameState) {
+        setResumeElapsed(result.elapsedSeconds);
+        setPendingSavedState(result.gameState);
+        setShowResumeModal(true);
+        timer.pause();
+      } else {
+        timer.start();
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Save effect
+  useEffect(() => {
+    if (!done) {
+      save({ pool, playerWords }, timer.elapsedSeconds);
+    }
+  }, [playerWords, done, save, timer.elapsedSeconds, pool]);
+
+  const handleResume = useCallback(() => {
+    setShowResumeModal(false);
+    if (pendingSavedState) {
+      setPool(pendingSavedState.pool);
+      setPlayerWords(pendingSavedState.playerWords);
+    }
+    timer.restoreAndResume(resumeElapsed);
+    setPendingSavedState(null);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    setShowResumeModal(false);
+    setPendingSavedState(null);
+    clear();
+    setPool(shuffle(LETTER_POOLS[0].split('')).join(''));
+    setPlayerWords([]);
+    setAiWords([]);
+    setSelected([]);
+    setTurn('player');
+    setAiThinking(false);
+    timer.start();
+  }, [clear, timer]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    clear();
     setWon(w);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer.elapsedSeconds, clear]);
 
   const doAITurn = useCallback((currentPool: string, pWords: string[], aWords: string[]) => {
     setAiThinking(true);
@@ -196,6 +248,16 @@ export function WordsmithsDuelGame({ onComplete, onBack, savedStateJSON }: Props
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="⚔️"
+        gameName="Wordsmiths Duel"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `Your score: ${pendingSavedState.playerWords.reduce((s,w) => s+w.length, 0)}` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <Text style={s.title}>Wordsmiths Duel</Text>
       <Text style={s.subtitle}>Form words from the pool · Most letters wins</Text>
 
@@ -265,11 +327,10 @@ export function WordsmithsDuelGame({ onComplete, onBack, savedStateJSON }: Props
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
               setPool(shuffle(LETTER_POOLS[Math.floor(Math.random()*LETTER_POOLS.length)].split('')).join(''));
               setPlayerWords([]); setAiWords([]); setSelected([]); setTurn('player'); setAiThinking(false);
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Play Again</Text>
             </TouchableOpacity>

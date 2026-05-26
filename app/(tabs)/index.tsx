@@ -116,7 +116,7 @@ function AnimatedTile({
 export default function HomeScreen() {
   const router = useRouter();
   const colors = useTheme();
-  const { games: progressGames, overallStreak, favoritedGames, toggleFavorite } = useProgressStore();
+  const { games: progressGames, favoritedGames, toggleFavorite } = useProgressStore();
   const [activeCategory, setActiveCategory] = useState<Category>('all');
   const s = useMemo(() => makeStyles(colors), [colors]);
 
@@ -162,12 +162,6 @@ export default function HomeScreen() {
             <Text style={s.userName}>PuzzleVerse</Text>
           </View>
           <View style={s.headerActions}>
-            {overallStreak > 0 && (
-              <View style={s.streakPill}>
-                <Ionicons name="flame" size={14} color="#E26A2C" />
-                <Text style={s.streakCount}>{overallStreak}</Text>
-              </View>
-            )}
             <TouchableOpacity style={s.iconButton} onPress={() => router.push('/search')} activeOpacity={0.7}>
               <Ionicons name="search-outline" size={20} color={colors.inkSoft} />
             </TouchableOpacity>

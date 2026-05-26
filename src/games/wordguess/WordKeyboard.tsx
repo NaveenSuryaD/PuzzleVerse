@@ -131,6 +131,8 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: fonts.bold,
     lineHeight: 18,
+    textAlign: 'center',
+    width: REGULAR_KEY_WIDTH,
     color: '#000000',
   },
 });

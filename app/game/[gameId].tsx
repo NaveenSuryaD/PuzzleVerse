@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useCallback, useState, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
@@ -11,8 +11,6 @@ import { fonts } from '../../src/theme/typography';
 import { GAMES } from '../../src/constants/games';
 import { getHints } from '../../src/constants/gameHints';
 import { Confetti } from '../../src/components/Confetti';
-import { ResumeGameModal } from '../../src/components/ResumeGameModal';
-import { useGameTimer } from '../../src/hooks/useGameTimer';
 import { SudokuGame } from '../../src/games/sudoku/SudokuGame';
 import { WordGuessGame } from '../../src/games/wordguess/WordGuessGame';
 import { WordSearchGame } from '../../src/games/wordsearch/WordSearchGame';
@@ -101,7 +99,6 @@ import { GravityBlocksGame } from '../../src/games/gravityblocks/GravityBlocksGa
 import { DailyChallengeGame } from '../../src/games/dailychallenge/DailyChallengeGame';
 import { useProgressStore } from '../../src/store/useProgressStore';
 import { useGameStore } from '../../src/store/useGameStore';
-import { loadGameRaw, clearGame } from '../../src/utils/gameSave';
 import type { GameMode } from '../../src/games/wordguess/types';
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -112,12 +109,6 @@ function getDailyPuzzleNumber(): number {
   return Math.floor((now.getTime() - EPOCH.getTime()) / 86400000) + 1;
 }
 
-const formatTime = (secs: number): string => {
-  const m = Math.floor(secs / 60);
-  const s = secs % 60;
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-};
-
 export default function GameScreen() {
   const { gameId, mode, date, difficulty, daily: dailyParam } = useLocalSearchParams<{ gameId: string; mode?: string; date?: string; difficulty?: string; daily?: string }>();
   const router = useRouter();
@@ -126,59 +117,38 @@ export default function GameScreen() {
   const { recordGame, recordDailyComplete, games: progressGames } = useProgressStore();
   const { startGame, endGame } = useGameStore();
 
-  const showTimer = useSettingsStore(s => s.showTimer);
   const hapticsEnabled = useSettingsStore(s => s.hapticsEnabled);
-  const { elapsedSeconds: elapsed, start: timerStart, pause: timerPause, resume: timerResume, reset: timerReset, restore: timerRestore } = useGameTimer(0);
+
   const [showHowToPlay, setShowHowToPlay] = useState(false);
   const [showHintModal, setShowHintModal] = useState(false);
   const [hintsRemaining, setHintsRemaining] = useState(3);
   const [hintIndex, setHintIndex] = useState(0);
   const [sessionHintsUsed, setSessionHintsUsed] = useState(0);
   const [sudokuDone, setSudokuDone] = useState(false);
+  const [sudokuTime, setSudokuTime] = useState(0);
+  const [currentSudokuDifficulty, setCurrentSudokuDifficulty] = useState<string>(
+    (difficulty === 'easy' || difficulty === 'medium' || difficulty === 'hard') ? difficulty : 'easy'
+  );
   const [showConfetti, setShowConfetti] = useState(false);
   const [streakMsg, setStreakMsg] = useState('');
   const [starCount, setStarCount] = useState(0);
   const [showStars, setShowStars] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
-  // undefined = still loading from AsyncStorage; null = no save; string = saved JSON
-  const [savedStateJSON, setSavedStateJSON] = useState<string | null | undefined>(undefined);
-  const [showResumeModal, setShowResumeModal] = useState(false);
-  const [savedElapsed, setSavedElapsed] = useState(0);
-  const [gameKey, setGameKey] = useState(0);
 
   const game = GAMES.find(g => g.id === gameId);
+  const shellModalOpen = showHowToPlay || showHintModal || showTutorial;
 
   useEffect(() => {
     if (!gameId) return;
     startGame(gameId);
     const isFirstPlay = (progressGames[gameId]?.gamesPlayed ?? 0) === 0;
-    loadGameRaw(gameId).then(raw => {
-      if (raw) {
-        setSavedStateJSON(raw);
-        // Extract saved elapsed time if present
-        try {
-          const parsed = JSON.parse(raw);
-          if (parsed._elapsed) setSavedElapsed(parsed._elapsed);
-        } catch { /* ignore */ }
-        timerPause(); // keep timer frozen while resume modal shows
-        setShowResumeModal(true);
-      } else {
-        setSavedStateJSON(null);
-        if (isFirstPlay) {
-          timerPause();
-          setShowTutorial(true);
-        } else {
-          timerStart();
-        }
-      }
-    });
+    if (isFirstPlay) setShowTutorial(true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameId]);
 
-  // Close modals when navigating away so they don't bleed into other screens
+  // Close modals when navigating away
   useEffect(() => {
     const unsub = navigation.addListener('blur', () => {
-      setShowResumeModal(false);
       setShowTutorial(false);
     });
     return unsub;
@@ -186,30 +156,28 @@ export default function GameScreen() {
 
   const handleComplete = useCallback((won: boolean, timeSeconds: number, guessCount?: number) => {
     if (!gameId) return;
-    timerPause();
-    clearGame(gameId);
     recordGame(gameId, won, timeSeconds, sessionHintsUsed, guessCount);
     endGame(won);
-    if (gameId === 'sudoku') setSudokuDone(true);
+    if (gameId === 'sudoku') {
+      setSudokuTime(timeSeconds);
+      setSudokuDone(true);
+    }
     if (hapticsEnabled) {
       if (won) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       else Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     }
-    // GroupIt and Hangman manage their own sounds; skip double-play
     if (gameId !== 'group-it' && gameId !== 'hangman') {
       playSound(won ? 'win' : 'lose');
     }
     if (won) {
       setShowConfetti(true);
       setTimeout(() => setShowConfetti(false), 2000);
-      // Star rating: compare time vs estimated
       const estimatedSecs = (game?.estimatedMinutes ?? 3) * 60;
       const ratio = timeSeconds / estimatedSecs;
       const stars = ratio < 0.5 ? 3 : ratio < 1.0 ? 2 : 1;
       setStarCount(stars);
       setShowStars(true);
       setTimeout(() => setShowStars(false), 2200);
-      // Streak milestone messaging
       const newStreak = (progressGames[gameId]?.currentStreak ?? 0) + 1;
       if (newStreak === 3) setStreakMsg("3 days in a row! You're building a habit 🔥");
       else if (newStreak === 7) setStreakMsg('7-day streak! Word Wizard unlocked 🏆');
@@ -219,12 +187,10 @@ export default function GameScreen() {
         setTimeout(() => setStreakMsg(''), 3500);
       }
     }
-  }, [gameId, recordGame, endGame, hapticsEnabled, progressGames, sessionHintsUsed]);
+  }, [gameId, recordGame, endGame, hapticsEnabled, progressGames, sessionHintsUsed, game]);
 
   const handleDailyComplete = useCallback((won: boolean, timeSeconds: number, dailyDate: string) => {
     if (!gameId) return;
-    timerPause();
-    clearGame(gameId);
     recordGame(gameId, won, timeSeconds);
     endGame(won);
     recordDailyComplete(gameId, dailyDate, won);
@@ -264,7 +230,7 @@ export default function GameScreen() {
     'pattern-recog':      'What comes next?',
     'sequence-fill':      'Complete the sequence',
     'math-sprint':        '20 questions · timed',
-    'sudoku':             isDailyGame ? `Daily Sudoku #${getDailyPuzzleNumber()}` : (sudokuDifficulty ? sudokuDifficulty.charAt(0).toUpperCase() + sudokuDifficulty.slice(1) : 'Medium'),
+    'sudoku':             isDailyGame ? `Daily Sudoku #${getDailyPuzzleNumber()}` : (currentSudokuDifficulty.charAt(0).toUpperCase() + currentSudokuDifficulty.slice(1)),
     'anagram':            'Unscramble the word',
     'compound-words':     'Build compound words',
     'game-2048':          'Reach 2048!',
@@ -366,19 +332,14 @@ export default function GameScreen() {
   const tutorial = TUTORIALS[game.id] ?? game.description ?? 'Tap to start playing!';
 
   const renderGame = () => {
-    // Wait until AsyncStorage check completes before rendering the game.
-    // This ensures useState() initialisers in game components receive the correct savedStateJSON.
-    if (savedStateJSON === undefined) return null;
-
-    const ss = savedStateJSON ?? undefined;
-
     if (game.id === 'sudoku') {
       return (
         <SudokuGame
           difficulty={sudokuDifficulty}
           daily={isDailyGame}
           onComplete={(_, t) => isDailyGame ? handleDailyComplete(true, t, dailyDate) : handleComplete(true, t)}
-          savedStateJSON={ss}
+          paused={shellModalOpen}
+          onDifficultyChange={d => setCurrentSudokuDifficulty(d)}
         />
       );
     }
@@ -389,139 +350,100 @@ export default function GameScreen() {
             mode="daily"
             dateOverride={date}
             onComplete={(won, attempts) => handleDailyComplete(won, attempts * 60, dailyDate)}
-            onBack={() => router.back()}
-            savedStateJSON={ss}
-          />
+            onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />
         );
       }
       return (
         <WordGuessGame
           mode={gameMode}
           onComplete={(won, attempts) => handleComplete(won, attempts * 60, attempts)}
-          onBack={() => router.back()}
-          savedStateJSON={ss}
-        />
+          onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />
       );
     }
-    if (game.id === 'word-search') {
-      return (
-        <WordSearchGame
-          onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss}
-        />
-      );
-    }
-    if (game.id === 'group-it') {
-      return (
-        <GroupItGame
-          onComplete={(won, t) => handleComplete(won, t)}
-          onBack={() => router.back()} savedStateJSON={ss}
-        />
-      );
-    }
-    if (game.id === 'hangman') {
-      return (
-        <HangmanGame
-          onComplete={(won, t) => handleComplete(won, t)}
-          onBack={() => router.back()} savedStateJSON={ss}
-        />
-      );
-    }
-    if (game.id === 'number-bonds') {
-      return (
-        <NumberBondsGame
-          onComplete={(won, t) => handleComplete(won, t)}
-          onBack={() => router.back()} savedStateJSON={ss}
-        />
-      );
-    }
-    if (game.id === 'crossword-mini') {
-      return <CrosswordGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    }
-    if (game.id === 'pattern-recog') {
-      return <PatternRecogGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    }
-    if (game.id === 'sequence-fill') {
-      return <SequenceFillGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    }
-    if (game.id === 'math-sprint') {
-      return <MathSprintGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    }
+    if (game.id === 'word-search') return <WordSearchGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'group-it') return <GroupItGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'hangman') return <HangmanGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'number-bonds') return <NumberBondsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'crossword-mini') return <CrosswordGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'pattern-recog') return <PatternRecogGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'sequence-fill') return <SequenceFillGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'math-sprint') return <MathSprintGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
     // MVP 8
-    if (game.id === 'anagram') return <AnagramGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'compound-words') return <CompoundWordsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'game-2048') return <Game2048Game onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'kakuro') return <KakuroGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'color-sort') return <ColorSortGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'pipe-connect') return <PipeConnectGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'tower-of-hanoi') return <TowerOfHanoiGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'sliding-puzzle') return <SlidingPuzzleGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'anagram') return <AnagramGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'compound-words') return <CompoundWordsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'game-2048') return <Game2048Game onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'kakuro') return <KakuroGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'color-sort') return <ColorSortGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'pipe-connect') return <PipeConnectGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'tower-of-hanoi') return <TowerOfHanoiGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'sliding-puzzle') return <SlidingPuzzleGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
     // MVP 9
-    if (game.id === 'hidden-words') return <HiddenWordsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'word-chain') return <WordChainGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'word-ladder') return <WordLadderGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'minesweeper') return <MinesweeperGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'magic-square') return <MagicSquareGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'balance-scales') return <BalanceScalesGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'flood-fill') return <FloodFillGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'maze-runner') return <MazeRunnerGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'pixel-art') return <PixelArtGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'flag-quiz') return <FlagQuizGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'noughts-crosses') return <NoughtsCrossesGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'hidden-words') return <HiddenWordsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'word-chain') return <WordChainGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'word-ladder') return <WordLadderGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'minesweeper') return <MinesweeperGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'magic-square') return <MagicSquareGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'balance-scales') return <BalanceScalesGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'flood-fill') return <FloodFillGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'maze-runner') return <MazeRunnerGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'pixel-art') return <PixelArtGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'flag-quiz') return <FlagQuizGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'noughts-crosses') return <NoughtsCrossesGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
     // MVP 10
-    if (game.id === 'boggle') return <BoggleGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'rhyme-time') return <RhymeTimeGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'backwards-words') return <BackwardsWordsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'cryptogram') return <CryptogramGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'kenken') return <KenKenGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'math-crossword') return <MathCrosswordGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'nonogram') return <NonogramGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'hitori') return <HitoriGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'chess-puzzles') return <ChessPuzzlesGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'science-symbols') return <ScienceSymbolsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'boggle') return <BoggleGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'rhyme-time') return <RhymeTimeGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'backwards-words') return <BackwardsWordsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'cryptogram') return <CryptogramGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'kenken') return <KenKenGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'math-crossword') return <MathCrosswordGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'nonogram') return <NonogramGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'hitori') return <HitoriGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'chess-puzzles') return <ChessPuzzlesGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'science-symbols') return <ScienceSymbolsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
     // MVP 11
-    if (game.id === 'word-hive') return <WordHiveGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'missing-vowels') return <MissingVowelsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'quote-guess') return <QuoteGuessGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'letter-soup') return <LetterSoupGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'memory-match') return <MemoryMatchGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'symbol-sequence') return <SymbolSequenceGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'peg-solitaire') return <PegSolitaireGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'skyscrapers') return <SkyscrapersGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'takuzu') return <TakuzuGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'dots-boxes') return <DotsBoxesGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'logic-grid') return <LogicGridGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'word-hive') return <WordHiveGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'missing-vowels') return <MissingVowelsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'quote-guess') return <QuoteGuessGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'letter-soup') return <LetterSoupGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'memory-match') return <MemoryMatchGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'symbol-sequence') return <SymbolSequenceGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'peg-solitaire') return <PegSolitaireGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'skyscrapers') return <SkyscrapersGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'takuzu') return <TakuzuGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'dots-boxes') return <DotsBoxesGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'logic-grid') return <LogicGridGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
     // MVP 12
-    if (game.id === 'word-bingo') return <WordBingoGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'vocab-builder') return <VocabBuilderGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'abbreviations') return <AbbreviationsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'dominoes') return <DominoesGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'shikaku') return <ShikakuGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'typeshift') return <TypeshiftGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'word-bingo') return <WordBingoGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'vocab-builder') return <VocabBuilderGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'abbreviations') return <AbbreviationsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'dominoes') return <DominoesGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'shikaku') return <ShikakuGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'typeshift') return <TypeshiftGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
     // MVP 13
-    if (game.id === 'word-morph') return <WordMorphGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'emoji-story') return <EmojiStoryGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'reversi') return <ReversiGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'last-letter') return <LastLetterGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'speed-tap') return <SpeedTapGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'number-maze') return <NumberMazeGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'mirror-puzzle') return <MirrorPuzzleGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'word-morph') return <WordMorphGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'emoji-story') return <EmojiStoryGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'reversi') return <ReversiGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'last-letter') return <LastLetterGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'speed-tap') return <SpeedTapGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'number-maze') return <NumberMazeGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'mirror-puzzle') return <MirrorPuzzleGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
     // MVP 14
-    if (game.id === 'mahjong') return <MahjongGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'checkers') return <CheckersGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'masyu') return <MasyuGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'tapa') return <TapaGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'fillomino') return <FillominoGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'acrostic') return <AcrosticGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'syllable-split') return <SyllableSplitGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'word-parts') return <WordPartsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'phonetic-spelling') return <PhoneticSpellingGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'emoji-sudoku') return <EmojiSudokuGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'mahjong') return <MahjongGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'checkers') return <CheckersGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'masyu') return <MasyuGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'tapa') return <TapaGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'fillomino') return <FillominoGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'acrostic') return <AcrosticGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'syllable-split') return <SyllableSplitGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'word-parts') return <WordPartsGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'phonetic-spelling') return <PhoneticSpellingGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'emoji-sudoku') return <EmojiSudokuGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
     // MVP 15
-    if (game.id === 'letter-drop') return <LetterDropGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'word-maze') return <WordMazeGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'wordsmiths-duel') return <WordsmithsDuelGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'gravity-blocks') return <GravityBlocksGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
-    if (game.id === 'daily-challenge') return <DailyChallengeGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.back()} savedStateJSON={ss} />;
+    if (game.id === 'letter-drop') return <LetterDropGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'word-maze') return <WordMazeGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'wordsmiths-duel') return <WordsmithsDuelGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'gravity-blocks') return <GravityBlocksGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
+    if (game.id === 'daily-challenge') return <DailyChallengeGame onComplete={(won, t) => handleComplete(won, t)} onBack={() => router.canGoBack() ? router.back() : router.replace("/(tabs)")} paused={shellModalOpen} />;
     return (
       <View style={s.placeholder}>
         <Text style={s.placeholderEmoji}>{game.emoji}</Text>
@@ -530,13 +452,20 @@ export default function GameScreen() {
     );
   };
 
+  const formatTime = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const sec = secs % 60;
+    return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+  };
+
   return (
     <SafeAreaView style={s.container} edges={['top']}>
       <View style={s.header}>
         <TouchableOpacity
           onPress={() => {
             if (hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            router.back();
+            if (router.canGoBack()) router.back();
+            else router.replace('/(tabs)');
           }}
           style={s.iconBtn}
           activeOpacity={0.7}
@@ -549,34 +478,25 @@ export default function GameScreen() {
           <Text style={s.headerSub}>{subtitle}</Text>
         </View>
 
-        {showTimer && (
-          <View style={s.timerPill}>
-            <Ionicons name="time-outline" size={13} color={colors.inkSoft} />
-            <Text style={s.timerText}>{formatTime(elapsed)}</Text>
-          </View>
-        )}
-
-        {/* How to Play button — always free */}
+        {/* How to Play button */}
         <TouchableOpacity
           style={s.iconBtn}
           activeOpacity={0.7}
           onPress={() => {
             if (hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            timerPause();
             setShowHowToPlay(true);
           }}
         >
           <Text style={s.howToPlayIcon}>?</Text>
         </TouchableOpacity>
 
-        {/* Progressive hint button with count badge */}
+        {/* Hint button */}
         <TouchableOpacity
           style={[s.hintCountBtn, hintsRemaining === 0 && s.hintCountBtnDepleted]}
           activeOpacity={0.7}
           onPress={() => {
             if (hintsRemaining === 0) return;
             if (hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            timerPause();
             setShowHintModal(true);
           }}
         >
@@ -587,20 +507,20 @@ export default function GameScreen() {
         </TouchableOpacity>
       </View>
 
-      <View style={s.gameArea} key={gameKey}>
+      <View style={s.gameArea}>
         {renderGame()}
-        {/* Sudoku-specific completion overlay (no internal modal) */}
+        {/* Sudoku-specific completion overlay */}
         {sudokuDone && (
           <View style={s.sudokuDoneOverlay}>
             <View style={[s.sudokuDoneCard, { backgroundColor: colors.surface }]}>
-              <Text style={[s.sudokuDoneEmoji]}>🏆</Text>
+              <Text style={s.sudokuDoneEmoji}>🏆</Text>
               <Text style={[s.sudokuDoneTitle, { color: colors.ink }]}>Puzzle Solved!</Text>
               <Text style={[s.sudokuDoneSub, { color: colors.inkMuted }]}>
-                {formatTime(elapsed)} · Great work
+                {formatTime(sudokuTime)} · Great work
               </Text>
               <TouchableOpacity
                 style={[s.sudokuDoneBtn, { backgroundColor: colors.ink }]}
-                onPress={() => { setSudokuDone(false); timerReset(0); timerStart(); }}
+                onPress={() => setSudokuDone(false)}
                 activeOpacity={0.82}
               >
                 <Text style={[s.sudokuDoneBtnText, { color: colors.bg }]}>New Game</Text>
@@ -642,29 +562,8 @@ export default function GameScreen() {
         </View>
       )}
 
-      {/* Resume / New Game modal */}
-      <ResumeGameModal
-        visible={showResumeModal}
-        gameEmoji={game.emoji}
-        gameName={game.name}
-        elapsedSeconds={savedElapsed}
-        onResume={() => {
-          timerRestore(savedElapsed);
-          timerStart();
-          setShowResumeModal(false);
-        }}
-        onStartFresh={() => {
-          clearGame(gameId!);
-          setSavedStateJSON(null);
-          setShowResumeModal(false);
-          timerReset(0);
-          timerStart();
-          setGameKey(k => k + 1);
-        }}
-      />
-
       {/* First-time tutorial modal */}
-      <Modal visible={showTutorial} transparent animationType="fade" onRequestClose={() => { setShowTutorial(false); timerStart(); }}>
+      <Modal visible={showTutorial} transparent animationType="fade" onRequestClose={() => setShowTutorial(false)}>
         <View style={s.tutorialOverlay}>
           <View style={[s.tutorialCard, { backgroundColor: colors.surface }]}>
             <Text style={[s.tutorialGameName, { color: colors.inkMuted }]}>{game.name}</Text>
@@ -672,7 +571,7 @@ export default function GameScreen() {
             <Text style={[s.tutorialBody, { color: colors.inkSoft }]}>{tutorial}</Text>
             <TouchableOpacity
               style={[s.tutorialBtn, { backgroundColor: colors.ink }]}
-              onPress={() => { setShowTutorial(false); timerStart(); }}
+              onPress={() => setShowTutorial(false)}
               activeOpacity={0.82}
             >
               <Text style={[s.tutorialBtnText, { color: colors.bg }]}>Let's Play!</Text>
@@ -681,9 +580,9 @@ export default function GameScreen() {
         </View>
       </Modal>
 
-      {/* HOW TO PLAY modal — free, unlimited */}
-      <Modal visible={showHowToPlay} transparent animationType="slide" onRequestClose={() => { setShowHowToPlay(false); timerResume(); }}>
-        <TouchableOpacity style={s.htpOverlay} activeOpacity={1} onPress={() => { setShowHowToPlay(false); timerResume(); }}>
+      {/* HOW TO PLAY modal */}
+      <Modal visible={showHowToPlay} transparent animationType="slide" onRequestClose={() => setShowHowToPlay(false)}>
+        <TouchableOpacity style={s.htpOverlay} activeOpacity={1} onPress={() => setShowHowToPlay(false)}>
           <TouchableOpacity activeOpacity={1} onPress={() => {}}>
             <View style={[s.htpSheet, { backgroundColor: colors.surface }]}>
               <View style={s.htpHandle} />
@@ -705,7 +604,7 @@ export default function GameScreen() {
               </ScrollView>
               <TouchableOpacity
                 style={[s.htpBtn, { backgroundColor: colors.ink }]}
-                onPress={() => { setShowHowToPlay(false); timerResume(); }}
+                onPress={() => setShowHowToPlay(false)}
                 activeOpacity={0.82}
               >
                 <Text style={[s.htpBtnText, { color: colors.bg }]}>Got it, let's play!</Text>
@@ -715,8 +614,8 @@ export default function GameScreen() {
         </TouchableOpacity>
       </Modal>
 
-      {/* PROGRESSIVE HINT modal — limited, with penalty */}
-      <Modal visible={showHintModal} transparent animationType="fade" onRequestClose={() => { setShowHintModal(false); timerResume(); }}>
+      {/* HINT modal */}
+      <Modal visible={showHintModal} transparent animationType="fade" onRequestClose={() => setShowHintModal(false)}>
         <TouchableOpacity style={s.hintOverlay} activeOpacity={1} onPress={() => setShowHintModal(false)}>
           <TouchableOpacity activeOpacity={1} onPress={() => {}}>
             <View style={[s.hintCard, { backgroundColor: colors.surface }]}>
@@ -739,7 +638,7 @@ export default function GameScreen() {
               <View style={s.hintBtnRow}>
                 <TouchableOpacity
                   style={[s.hintBtn, { backgroundColor: colors.surface, borderWidth: 1.5, borderColor: colors.rule }]}
-                  onPress={() => { setShowHintModal(false); timerResume(); }}
+                  onPress={() => setShowHintModal(false)}
                   activeOpacity={0.82}
                 >
                   <Text style={[s.hintBtnText, { color: colors.inkSoft }]}>Not now</Text>
@@ -751,7 +650,6 @@ export default function GameScreen() {
                     setHintsRemaining(r => Math.max(r - 1, 0));
                     setSessionHintsUsed(h => h + 1);
                     setShowHintModal(false);
-                    timerResume();
                   }}
                   activeOpacity={0.82}
                 >
@@ -767,10 +665,7 @@ export default function GameScreen() {
 }
 
 const makeStyles = (colors: ReturnType<typeof useTheme>) => StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bg,
-  },
+  container: { flex: 1, backgroundColor: colors.bg },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -791,65 +686,14 @@ const makeStyles = (colors: ReturnType<typeof useTheme>) => StyleSheet.create({
     shadowRadius: 6,
     elevation: 2,
   },
-  headerCenter: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  headerTitle: {
-    fontSize: 16,
-    fontFamily: fonts.black,
-    color: colors.ink,
-    letterSpacing: -0.2,
-  },
-  headerSub: {
-    fontSize: 11,
-    fontFamily: fonts.bold,
-    color: colors.inkMuted,
-    marginTop: 1,
-  },
-  timerPill: {
-    height: 40,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    backgroundColor: colors.surface,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    shadowColor: colors.ink,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  timerText: {
-    fontSize: 13,
-    fontFamily: fonts.extraBold,
-    color: colors.ink,
-    fontVariant: ['tabular-nums'],
-  },
-  gameArea: {
-    flex: 1,
-  },
-  placeholder: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  placeholderEmoji: {
-    fontSize: 64,
-    marginBottom: 24,
-  },
-  placeholderText: {
-    fontSize: 18,
-    fontFamily: fonts.bold,
-    color: colors.inkSoft,
-  },
-  error: {
-    fontSize: 15,
-    fontFamily: fonts.regular,
-    color: colors.danger,
-    padding: 20,
-  },
+  headerCenter: { flex: 1, alignItems: 'center' },
+  headerTitle: { fontSize: 16, fontFamily: fonts.black, color: colors.ink, letterSpacing: -0.2 },
+  headerSub: { fontSize: 11, fontFamily: fonts.bold, color: colors.inkMuted, marginTop: 1 },
+  gameArea: { flex: 1 },
+  placeholder: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  placeholderEmoji: { fontSize: 64, marginBottom: 24 },
+  placeholderText: { fontSize: 18, fontFamily: fonts.bold, color: colors.inkSoft },
+  error: { fontSize: 15, fontFamily: fonts.regular, color: colors.danger, padding: 20 },
   sudokuDoneOverlay: {
     ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.45)',
@@ -858,143 +702,52 @@ const makeStyles = (colors: ReturnType<typeof useTheme>) => StyleSheet.create({
     padding: 32,
   },
   sudokuDoneCard: {
-    width: '100%',
-    borderRadius: 28,
-    padding: 28,
-    alignItems: 'center',
-    gap: 6,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.15,
-    shadowRadius: 24,
-    elevation: 12,
+    width: '100%', borderRadius: 28, padding: 28, alignItems: 'center', gap: 6,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.15, shadowRadius: 24, elevation: 12,
   },
   sudokuDoneEmoji: { fontSize: 48, marginBottom: 4 },
   sudokuDoneTitle: { fontFamily: fonts.black, fontSize: 24, letterSpacing: -0.5 },
   sudokuDoneSub: { fontFamily: fonts.semiBold, fontSize: 14, marginBottom: 8 },
-  sudokuDoneBtn: {
-    width: '100%',
-    paddingVertical: 14,
-    borderRadius: 999,
-    alignItems: 'center',
-  },
+  sudokuDoneBtn: { width: '100%', paddingVertical: 14, borderRadius: 999, alignItems: 'center' },
   sudokuDoneBtnText: { fontFamily: fonts.extraBold, fontSize: 15 },
   howToPlayIcon: {
-    fontFamily: fonts.black,
-    fontSize: 17,
-    color: colors.inkSoft,
-    width: 40,
-    height: 40,
-    lineHeight: 40,
-    textAlign: 'center',
-    backgroundColor: colors.surface,
-    borderRadius: 999,
-    shadowColor: colors.ink,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    elevation: 2,
-    overflow: 'hidden',
+    fontFamily: fonts.black, fontSize: 17, color: colors.inkSoft,
+    width: 40, height: 40, lineHeight: 40, textAlign: 'center',
+    backgroundColor: colors.surface, borderRadius: 999,
+    shadowColor: colors.ink, shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05, shadowRadius: 6, elevation: 2, overflow: 'hidden',
   },
   hintCountBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 10,
-    height: 40,
-    borderRadius: 999,
-    backgroundColor: colors.logic.bg,
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    paddingHorizontal: 10, height: 40, borderRadius: 999, backgroundColor: colors.logic.bg,
   },
-  hintCountBtnDepleted: {
-    backgroundColor: colors.surface,
-  },
+  hintCountBtnDepleted: { backgroundColor: colors.surface },
   hintBulb: { fontSize: 14 },
-  hintCountText: {
-    fontFamily: fonts.extraBold,
-    fontSize: 13,
-    color: colors.logic.ink,
-  },
-  htpOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
+  hintCountText: { fontFamily: fonts.extraBold, fontSize: 13, color: colors.logic.ink },
+  htpOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   htpSheet: {
-    borderTopLeftRadius: 32,
-    borderTopRightRadius: 32,
-    paddingTop: 12,
-    paddingHorizontal: 24,
-    paddingBottom: 40,
-    maxHeight: '80%',
+    borderTopLeftRadius: 32, borderTopRightRadius: 32,
+    paddingTop: 12, paddingHorizontal: 24, paddingBottom: 40, maxHeight: '80%',
   },
-  htpHandle: {
-    width: 40, height: 4, borderRadius: 2,
-    backgroundColor: colors.rule,
-    alignSelf: 'center',
-    marginBottom: 20,
-  },
-  htpTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    marginBottom: 16,
-  },
+  htpHandle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.rule, alignSelf: 'center', marginBottom: 20 },
+  htpTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 16 },
   htpEmoji: { fontSize: 40 },
-  htpGameName: {
-    fontFamily: fonts.bold,
-    fontSize: 11,
-    letterSpacing: 0.8,
-  },
-  htpGameTitle: {
-    fontFamily: fonts.black,
-    fontSize: 22,
-    letterSpacing: -0.4,
-  },
+  htpGameName: { fontFamily: fonts.bold, fontSize: 11, letterSpacing: 0.8 },
+  htpGameTitle: { fontFamily: fonts.black, fontSize: 22, letterSpacing: -0.4 },
   htpScroll: { flex: 1, marginBottom: 16 },
-  htpBody: {
-    fontFamily: fonts.semiBold,
-    fontSize: 15,
-    lineHeight: 24,
-    marginBottom: 12,
-  },
-  htpTipBox: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    padding: 14,
-    borderRadius: 14,
-    marginTop: 8,
-  },
-  htpTip: {
-    flex: 1,
-    fontFamily: fonts.semiBold,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  htpBtn: {
-    paddingVertical: 16,
-    borderRadius: 999,
-    alignItems: 'center',
-  },
+  htpBody: { fontFamily: fonts.semiBold, fontSize: 15, lineHeight: 24, marginBottom: 12 },
+  htpTipBox: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, padding: 14, borderRadius: 14, marginTop: 8 },
+  htpTip: { flex: 1, fontFamily: fonts.semiBold, fontSize: 14, lineHeight: 20 },
+  htpBtn: { paddingVertical: 16, borderRadius: 999, alignItems: 'center' },
   htpBtnText: { fontFamily: fonts.extraBold, fontSize: 16 },
   hintOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    paddingHorizontal: 16,
-    paddingBottom: 40,
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.45)',
+    alignItems: 'center', justifyContent: 'flex-end',
+    paddingHorizontal: 16, paddingBottom: 40,
   },
   hintCard: {
-    width: '100%',
-    borderRadius: 28,
-    padding: 24,
-    gap: 14,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.12,
-    shadowRadius: 24,
-    elevation: 10,
+    width: '100%', borderRadius: 28, padding: 24, gap: 14,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 24, elevation: 10,
   },
   hintHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   hintIconWell: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
@@ -1002,111 +755,31 @@ const makeStyles = (colors: ReturnType<typeof useTheme>) => StyleSheet.create({
   hintPenaltyNote: { fontFamily: fonts.semiBold, fontSize: 11, marginTop: 2 },
   hintText: { fontFamily: fonts.semiBold, fontSize: 15, lineHeight: 22 },
   hintBtnRow: { flexDirection: 'row', gap: 10, marginTop: 4 },
-  hintBtn: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 999,
-    alignItems: 'center',
-  },
+  hintBtn: { flex: 1, paddingVertical: 14, borderRadius: 999, alignItems: 'center' },
   hintBtnText: { fontFamily: fonts.extraBold, fontSize: 15 },
   streakToast: {
-    position: 'absolute',
-    bottom: 32,
-    left: 20,
-    right: 20,
-    backgroundColor: colors.ink,
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-    borderRadius: 20,
-    alignItems: 'center',
-    zIndex: 200,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 8,
+    position: 'absolute', bottom: 32, left: 20, right: 20,
+    backgroundColor: colors.ink, paddingHorizontal: 20, paddingVertical: 14,
+    borderRadius: 20, alignItems: 'center', zIndex: 200,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 8,
   },
-  streakToastText: {
-    fontFamily: fonts.extraBold,
-    fontSize: 15,
-    color: colors.bg,
-    textAlign: 'center',
-  },
-  starOverlay: {
-    position: 'absolute',
-    top: 70,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    zIndex: 210,
-    pointerEvents: 'none' as any,
-  },
-  starRow: {
-    fontSize: 32,
-    marginBottom: 4,
-  },
+  streakToastText: { fontFamily: fonts.extraBold, fontSize: 15, color: colors.bg, textAlign: 'center' },
+  starOverlay: { position: 'absolute', top: 70, left: 0, right: 0, alignItems: 'center', zIndex: 210, pointerEvents: 'none' as any },
+  starRow: { fontSize: 32, marginBottom: 4 },
   starLabel: {
-    fontFamily: fonts.black,
-    fontSize: 18,
-    color: colors.ink,
-    backgroundColor: colors.surface,
-    paddingHorizontal: 18,
-    paddingVertical: 7,
-    borderRadius: 999,
-    overflow: 'hidden',
-    shadowColor: colors.ink,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
+    fontFamily: fonts.black, fontSize: 18, color: colors.ink,
+    backgroundColor: colors.surface, paddingHorizontal: 18, paddingVertical: 7,
+    borderRadius: 999, overflow: 'hidden',
+    shadowColor: colors.ink, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 4,
   },
-  tutorialOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
-  },
+  tutorialOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: 24 },
   tutorialCard: {
-    width: '100%',
-    borderRadius: 28,
-    padding: 28,
-    alignItems: 'center',
-    gap: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.15,
-    shadowRadius: 24,
-    elevation: 12,
+    width: '100%', borderRadius: 28, padding: 28, alignItems: 'center', gap: 10,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.15, shadowRadius: 24, elevation: 12,
   },
-  tutorialGameName: {
-    fontFamily: fonts.bold,
-    fontSize: 12,
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-  },
-  tutorialTitle: {
-    fontFamily: fonts.black,
-    fontSize: 24,
-    letterSpacing: -0.4,
-    marginBottom: 4,
-  },
-  tutorialBody: {
-    fontFamily: fonts.semiBold,
-    fontSize: 15,
-    lineHeight: 23,
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  tutorialBtn: {
-    width: '100%',
-    paddingVertical: 16,
-    borderRadius: 999,
-    alignItems: 'center',
-    marginTop: 4,
-  },
-  tutorialBtnText: {
-    fontFamily: fonts.extraBold,
-    fontSize: 16,
-  },
+  tutorialGameName: { fontFamily: fonts.bold, fontSize: 12, letterSpacing: 0.8, textTransform: 'uppercase' },
+  tutorialTitle: { fontFamily: fonts.black, fontSize: 24, letterSpacing: -0.4, marginBottom: 4 },
+  tutorialBody: { fontFamily: fonts.semiBold, fontSize: 15, lineHeight: 23, textAlign: 'center', marginBottom: 8 },
+  tutorialBtn: { width: '100%', paddingVertical: 16, borderRadius: 999, alignItems: 'center', marginTop: 4 },
+  tutorialBtnText: { fontFamily: fonts.extraBold, fontSize: 16 },
 });

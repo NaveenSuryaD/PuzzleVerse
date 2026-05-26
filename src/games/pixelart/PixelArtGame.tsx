@@ -1,52 +1,96 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, Dimensions } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { PIXEL_ART_DESIGNS } from './puzzles';
 import * as Haptics from 'expo-haptics';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
+}
+
+interface SaveState {
+  designIdx: number;
+  userGrid: number[][];
 }
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const CELL = Math.min(Math.floor((SCREEN_W - 48) / 8), 40);
 
-export function PixelArtGame({ onComplete, onBack, savedStateJSON }: Props) {
+export function PixelArtGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
-
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
-  const [designIdx] = useState<number>(() => saved?.designIdx ?? Math.floor(Math.random() * PIXEL_ART_DESIGNS.length));
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SaveState>('pixel-art');
+
+  const [designIdx] = useState<number>(() => Math.floor(Math.random() * PIXEL_ART_DESIGNS.length));
   const design = PIXEL_ART_DESIGNS[designIdx];
 
   const [userGrid, setUserGrid] = useState<number[][]>(() =>
-    saved?.userGrid ?? Array.from({ length: 8 }, () => Array(8).fill(-1))
+    Array.from({ length: 8 }, () => Array(8).fill(-1))
   );
   const [selectedColor, setSelectedColor] = useState(1);
   const [done, setDone] = useState(false);
 
-  useSaveGame('pixel-art', () => ({ designIdx, userGrid }), !done, [userGrid], elapsedRef);
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SaveState | null>(null);
+
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Mount: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    load().then(result => {
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        timer.start();
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Save on meaningful changes
+  useEffect(() => {
+    if (!done && timer.isRunning) {
+      save({ designIdx, userGrid }, timer.elapsedSeconds);
+    }
+  }, [userGrid]);
+
+  const handleResume = useCallback(() => {
+    if (!pendingSavedState) return;
+    setUserGrid(pendingSavedState.userGrid);
+    setShowResumeModal(false);
+    timer.restoreAndResume(resumeElapsed);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    clear();
+    setUserGrid(Array.from({ length: 8 }, () => Array(8).fill(-1)));
+    setShowResumeModal(false);
+    timer.start();
+  }, [clear, timer]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    clear();
+    timer.pause();
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, clear, timer]);
 
   const checkComplete = useCallback((grid: number[][]) => {
     const correct = grid.every((row, ri) =>
@@ -68,6 +112,15 @@ export function PixelArtGame({ onComplete, onBack, savedStateJSON }: Props) {
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🖼️"
+        gameName="Pixel Art"
+        elapsedSeconds={resumeElapsed}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <Text style={s.title}>Color by Number</Text>
       <Text style={s.subtitle}>Color the grid to reveal: {design.name}</Text>
 
@@ -78,7 +131,6 @@ export function PixelArtGame({ onComplete, onBack, savedStateJSON }: Props) {
             {row.map((num, ci) => {
               const userColor = userGrid[ri][ci];
               const bgColor = userColor >= 0 ? design.colors[userColor] : colors.surface;
-              const isCorrect = userColor === num;
               return (
                 <TouchableOpacity
                   key={ci}
@@ -129,10 +181,9 @@ export function PixelArtGame({ onComplete, onBack, savedStateJSON }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
               setUserGrid(Array.from({ length: 8 }, () => Array(8).fill(-1)));
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Play Again</Text>
             </TouchableOpacity>

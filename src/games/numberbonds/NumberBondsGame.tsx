@@ -1,11 +1,13 @@
-import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, Dimensions } from 'react-native';
-import { useSaveGame } from '../../utils/gameSave';
 import { useTheme, type ThemeColors } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { generatePuzzle } from './generator';
 import type { Tile } from './types';
 import * as Haptics from 'expo-haptics';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const TILE_SIZE = Math.floor((SCREEN_W - 32 - 3 * 8) / 4);
@@ -13,44 +15,81 @@ const TILE_SIZE = Math.floor((SCREEN_W - 32 - 3 * 8) / 4);
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
 }
 
-export function NumberBondsGame({ onComplete, onBack, savedStateJSON }: Props) {
+interface SaveState {
+  puzzle: ReturnType<typeof generatePuzzle>;
+  tiles: Tile[];
+}
+
+export function NumberBondsGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
-  const [puzzle, setPuzzle] = useState<ReturnType<typeof generatePuzzle>>(() => saved?.puzzle ?? generatePuzzle());
-  const [tiles, setTiles] = useState<Tile[]>(() => saved?.tiles ?? puzzle.tiles);
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SaveState>('number-bonds');
+
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SaveState | null>(null);
+
+  const [puzzle, setPuzzle] = useState<ReturnType<typeof generatePuzzle>>(() => generatePuzzle());
+  const [tiles, setTiles] = useState<Tile[]>(() => puzzle.tiles);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [gameWon, setGameWon] = useState(false);
 
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
-
-  useSaveGame('number-bonds', () => ({ puzzle, tiles }), !gameWon, [tiles], elapsedRef);
-
-  const startTimer = useCallback(() => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+  // Mount effect: load saved state
+  useEffect(() => {
+    load().then(result => {
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        timer.start();
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Save effect: save on state changes
   useEffect(() => {
-    startTimer();
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [startTimer]);
+    if (!gameWon) {
+      save({ puzzle, tiles }, timer.elapsedSeconds);
+    }
+  }, [tiles, gameWon, puzzle, timer.elapsedSeconds, save]);
+
+  const handleResume = useCallback(() => {
+    if (pendingSavedState) {
+      setPuzzle(pendingSavedState.puzzle);
+      setTiles(pendingSavedState.tiles);
+    }
+    setShowResumeModal(false);
+    timer.restoreAndResume(resumeElapsed);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    clear();
+    setShowResumeModal(false);
+    timer.start();
+  }, [clear, timer]);
 
   const checkWin = useCallback((updatedTiles: Tile[]) => {
     if (!updatedTiles.every(t => t.state === 'matched')) return;
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    timer.pause();
+    clear();
     setGameWon(true);
-    onComplete(true, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(true, timer.elapsedSeconds);
+  }, [onComplete, timer, clear]);
 
   const handleTap = useCallback((tileId: number) => {
     if (gameWon) return;
@@ -90,15 +129,23 @@ export function NumberBondsGame({ onComplete, onBack, savedStateJSON }: Props) {
     setTiles(next.tiles);
     setSelectedId(null);
     setGameWon(false);
-    elapsedRef.current = 0;
-    completedRef.current = false;
-    startTimer();
-  }, [startTimer]);
+    timer.start();
+  }, [timer]);
 
   const matchedCount = tiles.filter(t => t.state === 'matched').length;
 
   return (
     <View style={s.root}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🔢"
+        gameName="Number Bonds"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `${pendingSavedState.tiles.filter(t => t.state === 'matched').length / 2} of ${pendingSavedState.tiles.length / 2} pairs found` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       {/* Target header */}
       <View style={s.targetWrap}>
         <Text style={s.targetLabel}>Pairs that sum to</Text>

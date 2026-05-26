@@ -1,14 +1,14 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
 }
 
 // Daily Challenge: a rotating set of mini challenges (one per "day")
@@ -67,14 +67,18 @@ const CHALLENGES = [
   },
 ];
 
-export function DailyChallengeGame({ onComplete, onBack, savedStateJSON }: Props) {
+export function DailyChallengeGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
 
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  }, [paused]);
+
 
   // Use day-of-year as seed to pick challenge
   const challengeIdx = useMemo(() => {
@@ -88,10 +92,8 @@ export function DailyChallengeGame({ onComplete, onBack, savedStateJSON }: Props
 
   const challenge = CHALLENGES[challengeIdx];
 
-  const [chosen, setChosen] = useState<string | null>(() => saved?.chosen ?? null);
+  const [chosen, setChosen] = useState<string | null>(null);
   const [done, setDone] = useState(false);
-
-  useSaveGame('daily-challenge', () => ({ chosen, challengeIdx }), !done, [chosen], elapsedRef);
   const [won, setWon] = useState(false);
   const [round, setRound] = useState(0);
   const [score, setScore] = useState(0);
@@ -101,19 +103,18 @@ export function DailyChallengeGame({ onComplete, onBack, savedStateJSON }: Props
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Mount effect: start timer immediately (no save/resume for daily challenge)
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    timer.start();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    timer.pause();
     setWon(w);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer]);
 
   const handleChoice = useCallback((choice: string) => {
     if (chosen !== null) return;
@@ -193,10 +194,9 @@ export function DailyChallengeGame({ onComplete, onBack, savedStateJSON }: Props
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
               setRound(0); setScore(0); setChosen(null);
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Try Again</Text>
             </TouchableOpacity>

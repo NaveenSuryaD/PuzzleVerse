@@ -9,9 +9,11 @@ import { fonts } from '../../theme/typography';
 import { getRandomCrossword } from './puzzles';
 import type { CrosswordPuzzle, Direction, ClueEntry } from './types';
 import * as Haptics from 'expo-haptics';
-import { useSaveGame } from '../../utils/gameSave';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { playSound } from '../../audio/sounds';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const GRID_PAD = 24;
@@ -23,10 +25,14 @@ const KEYBOARD_ROWS = [
   ['⌫','Z','X','C','V','B','N','M','✓'],
 ];
 
+interface CrosswordSaveState {
+  userGrid: string[][];
+}
+
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
 }
 
 function computeNumbers(solution: string[][]): (number | undefined)[][] {
@@ -53,16 +59,28 @@ function getCellsForClue(clue: ClueEntry): [number, number][] {
   return cells;
 }
 
-export function CrosswordGame({ onComplete, onBack, savedStateJSON }: Props) {
+export function CrosswordGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
   const hapticsEnabled = useSettingsStore(st => st.hapticsEnabled);
 
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<CrosswordSaveState>('crossword-mini');
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<CrosswordSaveState | null>(null);
+
   const [puzzle, setPuzzle] = useState<CrosswordPuzzle>(() => getRandomCrossword());
   const [userGrid, setUserGrid] = useState<string[][]>(() =>
-    saved?.userGrid ?? puzzle.solution.map(row => row.map(c => (c === '#' ? '#' : ''))),
+    puzzle.solution.map(row => row.map(c => (c === '#' ? '#' : ''))),
   );
   const [selectedClue, setSelectedClue] = useState<ClueEntry | null>(null);
   const [direction, setDirection] = useState<Direction>('across');
@@ -71,21 +89,63 @@ export function CrosswordGame({ onComplete, onBack, savedStateJSON }: Props) {
   const [revealedCells, setRevealedCells] = useState<Set<string>>(new Set());
   const [done, setDone] = useState(false);
 
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
   const lastTappedRef = useRef<string | null>(null);
+  const completedRef = useRef(false);
 
-  useSaveGame('crossword-mini', () => ({ userGrid }), !done, [userGrid], elapsedRef);
+  const initNewGame = useCallback(() => {
+    const next = getRandomCrossword();
+    setPuzzle(next);
+    setUserGrid(next.solution.map(row => row.map(c => (c === '#' ? '#' : ''))));
+    setSelectedClue(null);
+    setCursorIdx(0);
+    setErrorCells(new Set());
+    setRevealedCells(new Set());
+    setDone(false);
+    lastTappedRef.current = null;
+    completedRef.current = false;
+  }, []);
+
+  useEffect(() => {
+    const checkSaved = async () => {
+      const result = await load();
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        initNewGame();
+        timer.start();
+      }
+    };
+    checkSaved();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (done) { clear(); return; }
+    save({ userGrid }, timer.elapsedSeconds);
+  }, [userGrid]);
+
+  const handleResume = useCallback(() => {
+    setShowResumeModal(false);
+    if (pendingSavedState) {
+      setUserGrid(pendingSavedState.userGrid);
+    }
+    timer.restoreAndResume(resumeElapsed);
+    setPendingSavedState(null);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    setShowResumeModal(false);
+    clear();
+    initNewGame();
+    timer.start();
+    setPendingSavedState(null);
+  }, [clear, timer, initNewGame]);
 
   // Clue list scroll
   const clueScrollRef = useRef<ScrollView>(null);
   const clueYPositions = useRef<Map<string, number>>(new Map());
-
-  useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, []);
 
   const cellNumbers = useMemo(() => computeNumbers(puzzle.solution), [puzzle]);
 
@@ -118,13 +178,12 @@ export function CrosswordGame({ onComplete, onBack, savedStateJSON }: Props) {
     );
     if (correct && !completedRef.current) {
       completedRef.current = true;
-      if (timerRef.current) clearInterval(timerRef.current);
       playSound('win');
       if (hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setDone(true);
-      onComplete(true, elapsedRef.current);
+      onComplete(true, timer.elapsedSeconds);
     }
-  }, [puzzle, onComplete, hapticsEnabled]);
+  }, [puzzle, onComplete, hapticsEnabled, timer]);
 
   const tapCell = useCallback((r: number, c: number) => {
     if (puzzle.solution[r][c] === '#') return;
@@ -289,19 +348,8 @@ export function CrosswordGame({ onComplete, onBack, savedStateJSON }: Props) {
   }, [selectedClue, userGrid, puzzle, revealedCells, errorCells, checkComplete]);
 
   const restart = () => {
-    const next = getRandomCrossword(puzzle.id);
-    setPuzzle(next);
-    setUserGrid(next.solution.map(row => row.map(c => (c === '#' ? '#' : ''))));
-    setSelectedClue(null);
-    setCursorIdx(0);
-    setErrorCells(new Set());
-    setRevealedCells(new Set());
-    setDone(false);
-    elapsedRef.current = 0;
-    completedRef.current = false;
-    lastTappedRef.current = null;
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+    initNewGame();
+    timer.start();
   };
 
   const acrossClues = puzzle.clues.filter(c => c.direction === 'across').sort((a, b) => a.number - b.number);
@@ -309,6 +357,15 @@ export function CrosswordGame({ onComplete, onBack, savedStateJSON }: Props) {
 
   return (
     <ScrollView style={s.root} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="✏️"
+        gameName="Crossword Mini"
+        elapsedSeconds={resumeElapsed}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       {puzzle.title && (
         <Text style={s.puzzleTitle}>{puzzle.title}</Text>
       )}
@@ -505,6 +562,7 @@ const makeStyles = (colors: ThemeColors) => {
     },
     cellLetter: {
       fontFamily: fonts.black, fontSize: CELL_SIZE * 0.42, color: colors.ink,
+      width: CELL_SIZE, textAlign: 'center',
     },
 
     activeClue: {
@@ -529,7 +587,7 @@ const makeStyles = (colors: ThemeColors) => {
       shadowOpacity: 0.08, shadowRadius: 2, elevation: 2,
     },
     keyWide: { width: KEY_W * 1.5 },
-    keyText: { fontFamily: fonts.extraBold, fontSize: 13, color: colors.ink },
+    keyText: { fontFamily: fonts.extraBold, fontSize: 13, color: colors.ink, width: KEY_W, textAlign: 'center' },
 
     clueSection: { marginHorizontal: 16, marginTop: 12 },
     clueScroll: { maxHeight: 200 },

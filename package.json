@@ -30,6 +30,8 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.6",
+    "eslint": "^9.17.0",
+    "eslint-config-expo": "^9.0.0",
     "typescript": "~6.0.3"
   },
   "overrides": {
@@ -39,7 +41,8 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "lint": "expo lint"
   },
   "private": true,
   "expo": {

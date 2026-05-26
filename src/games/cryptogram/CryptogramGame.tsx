@@ -1,53 +1,95 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { STATIC_PUZZLES } from './puzzles';
 import * as Haptics from 'expo-haptics';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
+}
+
+interface SaveState {
+  puzzleIdx: number;
+  guesses: Record<string, string>;
 }
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
 
-export function CryptogramGame({ onComplete, onBack, savedStateJSON }: Props) {
+export function CryptogramGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
-
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
-  const [puzzleIdx] = useState<number>(() => saved?.puzzleIdx ?? Math.floor(Math.random() * STATIC_PUZZLES.length));
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SaveState>('cryptogram');
+
+  const [puzzleIdx] = useState<number>(() => Math.floor(Math.random() * STATIC_PUZZLES.length));
   const puzzle = STATIC_PUZZLES[puzzleIdx];
 
-  // User's guesses: encoded letter -> user's decoded letter
-  const [guesses, setGuesses] = useState<Record<string, string>>(() => saved?.guesses ?? {});
+  const [guesses, setGuesses] = useState<Record<string, string>>({});
   const [selectedEncoded, setSelectedEncoded] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
 
-  useSaveGame('cryptogram', () => ({ puzzleIdx, guesses }), !done, [puzzleIdx, guesses], elapsedRef);
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SaveState | null>(null);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Mount: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    load().then(result => {
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        timer.start();
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Save on meaningful changes
+  useEffect(() => {
+    if (!done && timer.isRunning) {
+      save({ puzzleIdx, guesses }, timer.elapsedSeconds);
+    }
+  }, [guesses]);
+
+  const handleResume = useCallback(() => {
+    if (!pendingSavedState) return;
+    setGuesses(pendingSavedState.guesses);
+    setShowResumeModal(false);
+    timer.restoreAndResume(resumeElapsed);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    clear();
+    setGuesses({});
+    setShowResumeModal(false);
+    timer.start();
+  }, [clear, timer]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    clear();
+    timer.pause();
     setWon(w);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, clear, timer]);
 
   const checkSolved = useCallback((g: Record<string, string>) => {
     const encoded = puzzle.encoded.replace(/ /g, '');
@@ -63,7 +105,6 @@ export function CryptogramGame({ onComplete, onBack, savedStateJSON }: Props) {
     if (!selectedEncoded) return;
     setGuesses(prev => {
       const next = { ...prev, [selectedEncoded]: letter };
-      // Auto-fill all same encoded letters
       checkSolved(next);
       return next;
     });
@@ -75,6 +116,16 @@ export function CryptogramGame({ onComplete, onBack, savedStateJSON }: Props) {
 
   return (
     <ScrollView contentContainerStyle={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🔐"
+        gameName="Cryptogram"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `${Object.keys(pendingSavedState.guesses).length} letters decoded` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <Text style={s.title}>Cryptogram</Text>
       <Text style={s.subtitle}>Decode the quote by tapping encoded letters</Text>
       <Text style={s.author}>— {puzzle.author}</Text>
@@ -84,7 +135,6 @@ export function CryptogramGame({ onComplete, onBack, savedStateJSON }: Props) {
           <View key={wi} style={s.wordGroup}>
             {word.split('').map((encodedChar, ci) => {
               const guess = guesses[encodedChar];
-              const correctChar = decodedWords[wi]?.[ci];
               const isSelected = selectedEncoded === encodedChar;
               return (
                 <TouchableOpacity
@@ -132,10 +182,9 @@ export function CryptogramGame({ onComplete, onBack, savedStateJSON }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
               setGuesses({}); setSelectedEncoded(null);
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Play Again</Text>
             </TouchableOpacity>
@@ -155,13 +204,13 @@ const makeStyles = (colors: ReturnType<typeof useTheme>) => StyleSheet.create({
   wordGroup: { flexDirection: 'row', gap: 3 },
   letterBox: { width: 24, alignItems: 'center', paddingBottom: 2, backgroundColor: colors.surface, borderRadius: 4 },
   letterBoxSelected: { backgroundColor: colors.logic.bg, borderWidth: 1, borderColor: colors.logic.ink },
-  guessLetter: { fontFamily: fonts.black, fontSize: 14, color: colors.ink, height: 18 },
+  guessLetter: { fontFamily: fonts.black, fontSize: 14, color: colors.ink, height: 18, width: 24, textAlign: 'center' },
   separator: { height: 1, width: '100%', backgroundColor: colors.ink, marginVertical: 2 },
   encodedLetter: { fontFamily: fonts.regular, fontSize: 10, color: colors.inkMuted },
   keyboard: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: 'center', maxWidth: 340 },
   key: { width: 36, height: 36, backgroundColor: colors.surface, borderRadius: 8, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.divider },
   keyUsed: { backgroundColor: colors.rule, opacity: 0.5 },
-  keyText: { fontFamily: fonts.bold, fontSize: 14, color: colors.ink },
+  keyText: { fontFamily: fonts.bold, fontSize: 14, color: colors.ink, width: '100%' as any, textAlign: 'center' },
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' },
   modal: { backgroundColor: colors.surface, borderRadius: 24, padding: 32, alignItems: 'center', width: 320 },
   modalEmoji: { fontSize: 52, marginBottom: 12 },

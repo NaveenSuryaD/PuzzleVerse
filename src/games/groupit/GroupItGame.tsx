@@ -27,7 +27,9 @@ import { useTheme, type ThemeColors } from '../../theme/useTheme';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { fonts } from '../../theme/typography';
 import { playSound } from '../../audio/sounds';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 import { getDailyPuzzle, getRandomPuzzle } from './puzzles';
 import type { Puzzle, PuzzleGroup, GameStatus, Tier } from './types';
 
@@ -174,40 +176,111 @@ const FlipTile: React.FC<FlipTileProps> = ({
 
 // ─── Main Game ────────────────────────────────────────────────────────────────
 
+interface GroupItSaveState {
+  puzzle: Puzzle;
+  foundGroups: PuzzleGroup[];
+  mistakes: number;
+  gameStatus: GameStatus;
+}
+
 interface GroupItGameProps {
   onComplete?: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
 }
 
-export const GroupItGame: React.FC<GroupItGameProps> = ({ onComplete, onBack, savedStateJSON }) => {
+export const GroupItGame: React.FC<GroupItGameProps> = ({ onComplete, onBack, paused = false }) => {
   const colors = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
   const tierColors = useMemo(() => TIER_COLORS(colors), [colors]);
   const hapticsEnabled = useSettingsStore(st => st.hapticsEnabled);
   const reducedMotion = useSettingsStore(st => st.reducedMotion);
 
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
-  const [puzzle, setPuzzle] = useState<Puzzle>(() => saved?.puzzle ?? getDailyPuzzle());
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<GroupItSaveState>('group-it');
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<GroupItSaveState | null>(null);
+
+  const [puzzle, setPuzzle] = useState<Puzzle>(() => getDailyPuzzle());
   const [displayWords, setDisplayWords] = useState<string[]>(() =>
     shuffle(puzzle.groups.flatMap(g => [...g.words]))
   );
   const [selectedWords, setSelectedWords] = useState<string[]>([]);
-  const [foundGroups, setFoundGroups] = useState<PuzzleGroup[]>(() => saved?.foundGroups ?? []);
+  const [foundGroups, setFoundGroups] = useState<PuzzleGroup[]>([]);
   const [pendingGroup, setPendingGroup] = useState<PuzzleGroup | null>(null);
-  const [mistakes, setMistakes] = useState<number>(() => saved?.mistakes ?? 0);
-  const [gameStatus, setGameStatus] = useState<GameStatus>(() => (saved?.gameStatus ?? 'playing') as GameStatus);
+  const [mistakes, setMistakes] = useState<number>(0);
+  const [gameStatus, setGameStatus] = useState<GameStatus>('playing');
   const [oneAway, setOneAway] = useState(false);
   const [showComplete, setShowComplete] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   // Each entry is tier for a correct guess, null for wrong
   const [guessHistory, setGuessHistory] = useState<Array<Tier | null>>([]);
 
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const initNewGame = useCallback((p: Puzzle) => {
+    setPuzzle(p);
+    setDisplayWords(shuffle(p.groups.flatMap(g => [...g.words])));
+    setSelectedWords([]);
+    setFoundGroups([]);
+    setPendingGroup(null);
+    setMistakes(0);
+    setGameStatus('playing');
+    setShowComplete(false);
+    setIsSubmitting(false);
+    setOneAway(false);
+    setGuessHistory([]);
+  }, []);
 
-  useSaveGame('group-it', () => ({ puzzle, foundGroups, mistakes, gameStatus }), gameStatus === 'playing', [foundGroups, mistakes], elapsedRef);
+  useEffect(() => {
+    const checkSaved = async () => {
+      const result = await load();
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        initNewGame(getDailyPuzzle());
+        timer.start();
+      }
+    };
+    checkSaved();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (gameStatus !== 'playing') { clear(); return; }
+    save({ puzzle, foundGroups, mistakes, gameStatus }, timer.elapsedSeconds);
+  }, [foundGroups, mistakes]);
+
+  const handleResume = useCallback(() => {
+    setShowResumeModal(false);
+    if (pendingSavedState) {
+      setPuzzle(pendingSavedState.puzzle);
+      setFoundGroups(pendingSavedState.foundGroups);
+      setMistakes(pendingSavedState.mistakes);
+      setGameStatus(pendingSavedState.gameStatus);
+      const remaining = pendingSavedState.puzzle.groups
+        .filter(g => !pendingSavedState.foundGroups.some(f => f.category === g.category))
+        .flatMap(g => [...g.words]);
+      setDisplayWords(shuffle(remaining));
+    }
+    timer.restoreAndResume(resumeElapsed);
+    setPendingSavedState(null);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    setShowResumeModal(false);
+    clear();
+    initNewGame(getDailyPuzzle());
+    timer.start();
+    setPendingSavedState(null);
+  }, [clear, timer, initNewGame]);
 
   // Shake animation for wrong guess
   const shakeX = useSharedValue(0);
@@ -220,12 +293,6 @@ export const GroupItGame: React.FC<GroupItGameProps> = ({ onComplete, onBack, sa
   const tileScaleStyle = useAnimatedStyle(() => ({
     transform: [{ scale: tileScale.value }],
   }));
-
-  useEffect(() => {
-    elapsedRef.current = 0;
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [puzzle]);
 
   const toggleSelect = useCallback((word: string) => {
     if (gameStatus !== 'playing' || isSubmitting || pendingGroup !== null) return;
@@ -271,12 +338,11 @@ export const GroupItGame: React.FC<GroupItGameProps> = ({ onComplete, onBack, sa
           const newFoundGroups = [...prev, matchingGroup];
 
           if (newFoundGroups.length === 4) {
-            if (timerRef.current) clearInterval(timerRef.current);
             setGameStatus('won');
             playSound('win');
             if (hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             setTimeout(() => setShowComplete(true), 300);
-            onComplete?.(true, elapsedRef.current);
+            onComplete?.(true, timer.elapsedSeconds);
           }
 
           return newFoundGroups;
@@ -326,32 +392,21 @@ export const GroupItGame: React.FC<GroupItGameProps> = ({ onComplete, onBack, sa
         setIsSubmitting(false);
 
         if (newMistakes >= MAX_MISTAKES) {
-          if (timerRef.current) clearInterval(timerRef.current);
           setFoundGroups(puzzle.groups.slice());
           setDisplayWords([]);
           setGameStatus('lost');
           setTimeout(() => setShowComplete(true), 400);
-          onComplete?.(false, elapsedRef.current);
+          onComplete?.(false, timer.elapsedSeconds);
         }
       }, 500);
     }
-  }, [selectedWords, isSubmitting, gameStatus, pendingGroup, puzzle, foundGroups, mistakes, hapticsEnabled, reducedMotion, shakeX, onComplete]);
+  }, [selectedWords, isSubmitting, gameStatus, pendingGroup, puzzle, foundGroups, mistakes, hapticsEnabled, reducedMotion, shakeX, onComplete, timer]);
 
   const startNewGame = useCallback(() => {
     const next = getRandomPuzzle(puzzle.id);
-    setPuzzle(next);
-    setDisplayWords(shuffle(next.groups.flatMap(g => [...g.words])));
-    setSelectedWords([]);
-    setFoundGroups([]);
-    setPendingGroup(null);
-    setMistakes(0);
-    setGameStatus('playing');
-    setShowComplete(false);
-    setIsSubmitting(false);
-    setOneAway(false);
-    setGuessHistory([]);
-    elapsedRef.current = 0;
-  }, [puzzle.id]);
+    initNewGame(next);
+    timer.start();
+  }, [puzzle.id, initNewGame, timer]);
 
   const handleShare = useCallback(async () => {
     const rows = guessHistory.map(tier => {
@@ -380,6 +435,15 @@ export const GroupItGame: React.FC<GroupItGameProps> = ({ onComplete, onBack, sa
       showsVerticalScrollIndicator={false}
       bounces={false}
     >
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🎯"
+        gameName="Group It"
+        elapsedSeconds={resumeElapsed}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       {/* Found groups */}
       {foundGroups
         .slice()

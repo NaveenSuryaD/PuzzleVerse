@@ -36,7 +36,9 @@ import {
 import type { WordDifficulty } from './generator';
 import { playSound } from '../../audio/sounds';
 import type { LetterState, KeyState, GameMode, GameStatus } from './types';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 const MAX_GUESSES = 6;
 const WORD_LENGTH = 5;
@@ -53,7 +55,20 @@ interface WordGuessGameProps {
   difficulty?: WordDifficulty;
   onComplete?: (won: boolean, attempts: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
+}
+
+type WGState = {
+  answer: string;
+  guesses: string[];
+  evaluations: LetterState[][];
+  currentGuess: string;
+  gameStatus: GameStatus;
+};
+
+interface GameSaveState {
+  state: WGState;
+  letterStates: Record<string, KeyState>;
 }
 
 export const WordGuessGame: React.FC<WordGuessGameProps> = ({
@@ -62,7 +77,7 @@ export const WordGuessGame: React.FC<WordGuessGameProps> = ({
   difficulty: initialDifficulty = 'medium',
   onComplete,
   onBack,
-  savedStateJSON,
+  paused = false,
 }) => {
   const colors = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -73,10 +88,19 @@ export const WordGuessGame: React.FC<WordGuessGameProps> = ({
   const [difficulty, setDifficulty] = React.useState<WordDifficulty>(initialDifficulty);
   const [hardMode, setHardMode] = useState(false);
 
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const savedParsed = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  }, [paused]);
 
-  const initGame = (diff: WordDifficulty = difficulty) => ({
+  const { save, load, clear } = usePersistentGameState<GameSaveState>('word-guess');
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<GameSaveState | null>(null);
+
+  const initGame = (diff: WordDifficulty = difficulty): WGState => ({
     answer: mode === 'daily' ? pickDailyWord(dateOverride) : pickWordByDifficulty(diff),
     guesses: [] as string[],
     evaluations: [] as LetterState[][],
@@ -84,22 +108,56 @@ export const WordGuessGame: React.FC<WordGuessGameProps> = ({
     gameStatus: 'playing' as GameStatus,
   });
 
-  type WGState = ReturnType<typeof initGame>;
-  const [state, setState] = useState<WGState>(() => {
-    if (savedParsed?.state?.answer) return savedParsed.state as WGState;
-    return initGame(initialDifficulty);
-  });
-  const [letterStates, setLetterStates] = useState<Record<string, KeyState>>(() => savedParsed?.letterStates ?? {});
-
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [state, setState] = useState<WGState>(() => initGame(initialDifficulty));
+  const [letterStates, setLetterStates] = useState<Record<string, KeyState>>({});
 
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    if (mode === 'daily') {
+      // Daily mode: no resume, just start fresh
+      setState(initGame(initialDifficulty));
+      timer.start();
+      return;
+    }
+    const checkSaved = async () => {
+      const result = await load();
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        setState(initGame(initialDifficulty));
+        setLetterStates({});
+        timer.start();
+      }
+    };
+    checkSaved();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useSaveGame('word-guess', () => ({ state, letterStates }), state.gameStatus === 'playing', [state.guesses.length, state.currentGuess], elapsedRef);
+  useEffect(() => {
+    if (state.gameStatus !== 'playing') { clear(); return; }
+    save({ state, letterStates }, timer.elapsedSeconds);
+  }, [state.guesses.length, state.currentGuess]);
+
+  const handleResume = useCallback(() => {
+    setShowResumeModal(false);
+    if (pendingSavedState) {
+      setState(pendingSavedState.state);
+      setLetterStates(pendingSavedState.letterStates);
+    }
+    timer.restoreAndResume(resumeElapsed);
+    setPendingSavedState(null);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    setShowResumeModal(false);
+    clear();
+    setState(initGame(initialDifficulty));
+    setLetterStates({});
+    timer.start();
+    setPendingSavedState(null);
+  }, [clear, timer]);
+
   const [flipRowIndex, setFlipRowIndex] = useState(-1);
   const [bounceRowIndex, setBounceRowIndex] = useState(-1);
   const [shakeRowIndex, setShakeRowIndex] = useState(-1);
@@ -265,7 +323,8 @@ export const WordGuessGame: React.FC<WordGuessGameProps> = ({
     sheetY.value = SCREEN_HEIGHT;
     if (newDiff && newDiff !== difficulty) setDifficulty(newDiff);
     setState(() => initGame(d));
-  }, [mode, difficulty]);
+    timer.start();
+  }, [mode, difficulty, timer]);
 
   const handleShare = useCallback(async () => {
     const text = generateShareText(state.guesses.length, MAX_GUESSES, state.evaluations, state.gameStatus === 'won');
@@ -284,6 +343,17 @@ export const WordGuessGame: React.FC<WordGuessGameProps> = ({
 
   return (
     <View style={styles.container}>
+      {mode !== 'daily' && (
+        <ResumeGameModal
+          visible={showResumeModal}
+          gameEmoji="📝"
+          gameName="Word Guess"
+          elapsedSeconds={resumeElapsed}
+          onResume={handleResume}
+          onStartFresh={handleStartFresh}
+        />
+      )}
+
       {/* Error toast */}
       <Animated.View style={[styles.toast, toastStyle]} pointerEvents="none">
         <Text style={styles.toastText}>{errorMessage}</Text>
@@ -296,7 +366,7 @@ export const WordGuessGame: React.FC<WordGuessGameProps> = ({
             {mode === 'daily' ? 'DAILY' : 'UNLIMITED'}
           </Text>
         </View>
-        <TouchableOpacity style={styles.helpButton} onPress={() => setShowHowToPlay(true)}>
+        <TouchableOpacity style={styles.helpButton} onPress={() => { timer.pause(); setShowHowToPlay(true); }}>
           <Ionicons name="help-circle-outline" size={24} color={colors.inkMuted} />
         </TouchableOpacity>
       </View>
@@ -369,11 +439,11 @@ export const WordGuessGame: React.FC<WordGuessGameProps> = ({
       )}
 
       {/* ── How to Play Modal ── */}
-      <Modal visible={showHowToPlay} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowHowToPlay(false)}>
+      <Modal visible={showHowToPlay} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => { setShowHowToPlay(false); timer.resume(); }}>
         <SafeAreaView style={styles.modal}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>How to Play</Text>
-            <TouchableOpacity onPress={() => setShowHowToPlay(false)} style={styles.closeBtn}>
+            <TouchableOpacity onPress={() => { setShowHowToPlay(false); timer.resume(); }} style={styles.closeBtn}>
               <Ionicons name="close" size={22} color={colors.ink} />
             </TouchableOpacity>
           </View>

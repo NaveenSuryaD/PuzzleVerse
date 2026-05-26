@@ -3,12 +3,18 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
+}
+
+interface SaveState {
+  round: number;
+  reactions: number[];
 }
 
 type Phase = 'idle' | 'wait' | 'tap' | 'tapped' | 'done';
@@ -16,45 +22,48 @@ type Phase = 'idle' | 'wait' | 'tap' | 'tapped' | 'done';
 const NUM_ROUNDS = 5;
 const WIN_AVG_MS = 500; // win if avg reaction < 500ms
 
-export function SpeedTapGame({ onComplete, onBack, savedStateJSON }: Props) {
+export function SpeedTapGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
-
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SaveState>('speed-tap');
+
   const [phase, setPhase] = useState<Phase>('idle');
-  const [round, setRound] = useState<number>(() => saved?.round ?? 0);
-  const [reactions, setReactions] = useState<number[]>(() => saved?.reactions ?? []);
+  const [round, setRound] = useState<number>(0);
+  const [reactions, setReactions] = useState<number[]>([]);
   const [currentReaction, setCurrentReaction] = useState<number | null>(null);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
   const [tooEarly, setTooEarly] = useState(false);
-
-  useSaveGame('speed-tap', () => ({ round, reactions }), !done, [round, reactions], elapsedRef);
 
   const tapStartRef = useRef(0);
   const waitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Mount: fast-paced game — no resume modal, just start timer
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+    timer.start();
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
       if (waitTimerRef.current) clearTimeout(waitTimerRef.current);
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    clear();
+    timer.pause();
     setWon(w);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, clear, timer]);
 
   const startRound = useCallback(() => {
     setPhase('wait');
@@ -158,11 +167,10 @@ export function SpeedTapGame({ onComplete, onBack, savedStateJSON }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
               setPhase('idle'); setRound(0); setReactions([]);
               setCurrentReaction(null); setTooEarly(false);
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Play Again</Text>
             </TouchableOpacity>

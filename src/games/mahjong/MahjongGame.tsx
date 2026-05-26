@@ -1,14 +1,16 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
 }
 
 // Simplified Mahjong Solitaire: match pairs of free tiles
@@ -37,36 +39,86 @@ function generateTiles(): { id: number; symbol: string; row: number; col: number
   }));
 }
 
-export function MahjongGame({ onComplete, onBack, savedStateJSON }: Props) {
-  const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
+type TileData = { id: number; symbol: string; row: number; col: number; removed: boolean };
 
+interface SavedState {
+  tiles: TileData[];
+  pairs: number;
+}
+
+export function MahjongGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
+  const colors = useTheme();
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
-  const [tiles, setTiles] = useState<ReturnType<typeof generateTiles>>(() => saved?.tiles ?? generateTiles());
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SavedState>('mahjong');
+
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SavedState | null>(null);
+
+  const [tiles, setTiles] = useState<TileData[]>(() => generateTiles());
   const [selected, setSelected] = useState<number | null>(null);
-  const [pairs, setPairs] = useState<number>(() => saved?.pairs ?? 0);
+  const [pairs, setPairs] = useState<number>(0);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
 
-  useSaveGame('mahjong', () => ({ tiles, pairs }), !done, [tiles, pairs], elapsedRef);
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Mount effect: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    load().then(result => {
+      if (result.found && result.gameState) {
+        setResumeElapsed(result.elapsedSeconds);
+        setPendingSavedState(result.gameState);
+        setShowResumeModal(true);
+        timer.pause();
+      } else {
+        timer.start();
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Save effect
+  useEffect(() => {
+    if (!done) {
+      save({ tiles, pairs }, timer.elapsedSeconds);
+    }
+  }, [tiles, pairs, done, save, timer.elapsedSeconds]);
+
+  const handleResume = useCallback(() => {
+    setShowResumeModal(false);
+    if (pendingSavedState) {
+      setTiles(pendingSavedState.tiles);
+      setPairs(pendingSavedState.pairs);
+    }
+    timer.restoreAndResume(resumeElapsed);
+    setPendingSavedState(null);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    setShowResumeModal(false);
+    setPendingSavedState(null);
+    clear();
+    setTiles(generateTiles());
+    setPairs(0);
+    setSelected(null);
+    timer.start();
+  }, [clear, timer]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    clear();
     setWon(w);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer.elapsedSeconds, clear]);
 
   // In this simplified version, all remaining tiles are "free"
   const handleTap = useCallback((id: number) => {
@@ -99,6 +151,16 @@ export function MahjongGame({ onComplete, onBack, savedStateJSON }: Props) {
 
   return (
     <ScrollView contentContainerStyle={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🀄"
+        gameName="Mahjong"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `${pendingSavedState.pairs} / 16 pairs found` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <Text style={s.title}>Mahjong</Text>
       <Text style={s.subtitle}>Match identical tile pairs</Text>
       <Text style={s.progress}>Pairs: {pairs} / 16  ·  Remaining: {remaining.length}</Text>
@@ -148,10 +210,9 @@ export function MahjongGame({ onComplete, onBack, savedStateJSON }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
               setTiles(generateTiles()); setSelected(null); setPairs(0);
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Play Again</Text>
             </TouchableOpacity>

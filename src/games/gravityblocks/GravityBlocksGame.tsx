@@ -1,14 +1,16 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
 }
 
 type AIDifficulty = 'easy' | 'medium' | 'hard';
@@ -138,50 +140,94 @@ function getAIColumn(board: Board, difficulty: AIDifficulty): number {
   return bestCol;
 }
 
-export function GravityBlocksGame({ onComplete, onBack, savedStateJSON }: Props) {
-  const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
+interface SavedState {
+  board: Board;
+  turn: string;
+}
 
+export function GravityBlocksGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
+  const colors = useTheme();
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SavedState>('gravity-blocks');
+
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SavedState | null>(null);
+
   const [difficulty, setDifficulty] = useState<AIDifficulty>('medium');
-  const [board, setBoard] = useState<Board>(() => saved?.board ?? initBoard());
-  const [turn, setTurn] = useState<'player' | 'ai'>(() => saved?.turn ?? 'player');
+  const [board, setBoard] = useState<Board>(() => initBoard());
+  const [turn, setTurn] = useState<'player' | 'ai'>('player');
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
   const [aiThinking, setAiThinking] = useState(false);
 
-  useSaveGame('gravity-blocks', () => ({ board, turn }), !done, [board, turn], elapsedRef);
-
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Mount effect: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    load().then(result => {
+      if (result.found && result.gameState) {
+        setResumeElapsed(result.elapsedSeconds);
+        setPendingSavedState(result.gameState);
+        setShowResumeModal(true);
+        timer.pause();
+      } else {
+        timer.start();
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
-    setWon(w);
-    setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+  // Save effect
+  useEffect(() => {
+    if (!done) {
+      save({ board, turn }, timer.elapsedSeconds);
+    }
+  }, [board, turn, done, save, timer.elapsedSeconds]);
 
-  const resetGame = useCallback((diff?: AIDifficulty) => {
-    setDone(false);
-    completedRef.current = false;
+  const handleResume = useCallback(() => {
+    setShowResumeModal(false);
+    if (pendingSavedState) {
+      setBoard(pendingSavedState.board);
+      setTurn(pendingSavedState.turn as 'player' | 'ai');
+    }
+    timer.restoreAndResume(resumeElapsed);
+    setPendingSavedState(null);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    setShowResumeModal(false);
+    setPendingSavedState(null);
+    clear();
     setBoard(initBoard());
     setTurn('player');
     setAiThinking(false);
-    elapsedRef.current = 0;
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+    timer.start();
+  }, [clear, timer]);
+
+  const finish = useCallback((w: boolean) => {
+    clear();
+    setWon(w);
+    setDone(true);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer.elapsedSeconds, clear]);
+
+  const resetGame = useCallback((diff?: AIDifficulty) => {
+    setDone(false);
+    setBoard(initBoard());
+    setTurn('player');
+    setAiThinking(false);
+    timer.start();
     if (diff) setDifficulty(diff);
-  }, []);
+  }, [timer]);
 
   const doAITurn = useCallback((b: Board, diff: AIDifficulty) => {
     setAiThinking(true);
@@ -215,6 +261,15 @@ export function GravityBlocksGame({ onComplete, onBack, savedStateJSON }: Props)
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🧱"
+        gameName="Gravity Blocks"
+        elapsedSeconds={resumeElapsed}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       {/* Difficulty selector */}
       <View style={s.diffRow}>
         {(['easy', 'medium', 'hard'] as AIDifficulty[]).map(d => (

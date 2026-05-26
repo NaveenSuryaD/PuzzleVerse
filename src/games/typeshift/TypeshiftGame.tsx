@@ -1,14 +1,16 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
 }
 
 // Typeshift: columns of letters, slide each column up/down to form words
@@ -39,38 +41,87 @@ const PUZZLES = [
   },
 ];
 
-export function TypeshiftGame({ onComplete, onBack, savedStateJSON }: Props) {
-  const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
+interface SaveState {
+  puzIdx: number;
+  positions: number[];
+  foundWords: string[];
+}
 
+export function TypeshiftGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
+  const colors = useTheme();
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
-  const [puzIdx, setPuzIdx] = useState<number>(() => saved?.puzIdx ?? 0);
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SaveState>('typeshift');
+
+  const [puzIdx, setPuzIdx] = useState<number>(0);
   const puz = PUZZLES[puzIdx];
 
-  const [positions, setPositions] = useState<number[]>(() => saved?.positions ?? puz.startPositions.slice());
-  const [foundWords, setFoundWords] = useState<Set<string>>(() => new Set(saved?.foundWords ?? []));
+  const [positions, setPositions] = useState<number[]>(() => puz.startPositions.slice());
+  const [foundWords, setFoundWords] = useState<Set<string>>(() => new Set());
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
 
-  useSaveGame('typeshift', () => ({ puzIdx, positions, foundWords: [...foundWords] }), !done, [puzIdx, positions, foundWords], elapsedRef);
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SaveState | null>(null);
+
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Mount effect: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    (async () => {
+      const result = await load();
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        timer.start();
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Save effect
+  useEffect(() => {
+    if (!done && !showResumeModal) {
+      save({ puzIdx, positions, foundWords: [...foundWords] }, timer.elapsedSeconds);
+    }
+  }, [puzIdx, positions, foundWords, timer.elapsedSeconds, done, showResumeModal, save]);
+
+  const handleResume = useCallback(() => {
+    if (pendingSavedState) {
+      setPuzIdx(pendingSavedState.puzIdx);
+      setPositions(pendingSavedState.positions);
+      setFoundWords(new Set(pendingSavedState.foundWords));
+    }
+    setShowResumeModal(false);
+    timer.restoreAndResume(resumeElapsed);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    clear();
+    setPuzIdx(0);
+    setPositions(PUZZLES[0].startPositions.slice());
+    setFoundWords(new Set());
+    setShowResumeModal(false);
+    timer.start();
+  }, [clear, timer]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    timer.pause();
+    clear();
     setWon(w);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer, clear]);
 
   const currentWord = positions.map((pos, col) => puz.columns[col][pos % puz.columns[col].length]).join('');
 
@@ -94,6 +145,16 @@ export function TypeshiftGame({ onComplete, onBack, savedStateJSON }: Props) {
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="⌨️"
+        gameName="Typeshift"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `${pendingSavedState.foundWords.length} words found` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <Text style={s.title}>Typeshift</Text>
       <Text style={s.subtitle}>Slide columns to form the target word</Text>
       <Text style={s.target}>Target: <Text style={s.targetWord}>{puz.target}</Text></Text>
@@ -153,13 +214,12 @@ export function TypeshiftGame({ onComplete, onBack, savedStateJSON }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
               const next = (puzIdx + 1) % PUZZLES.length;
               setPuzIdx(next);
               setPositions(PUZZLES[next].startPositions.slice());
               setFoundWords(new Set());
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Next Puzzle</Text>
             </TouchableOpacity>

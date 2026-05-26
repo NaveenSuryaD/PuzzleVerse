@@ -22,24 +22,36 @@ import { fonts } from '../../theme/typography';
 import { easings } from '../../theme/animations';
 import { generateSudoku, type Difficulty } from './generator';
 import type { SudokuState } from './types';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const GRID_SIZE = Math.min(SCREEN_WIDTH - 22 * 2, 360);
 const CELL_SIZE = GRID_SIZE / 9;
 
+interface SudokuSaveState {
+  puzzle: ReturnType<typeof generateSudoku>;
+  board: number[][];
+  notes: number[][][];
+  errors: boolean[][];
+  difficulty: Difficulty;
+}
+
 interface SudokuGameProps {
   difficulty?: Difficulty;
   daily?: boolean;
   onComplete?: (won: boolean, timeSeconds: number) => void;
-  savedStateJSON?: string;
+  paused?: boolean;
+  onDifficultyChange?: (d: Difficulty) => void;
 }
 
 export const SudokuGame: React.FC<SudokuGameProps> = ({
   difficulty: initialDifficulty,
   daily = false,
   onComplete,
-  savedStateJSON,
+  paused = false,
+  onDifficultyChange,
 }) => {
   const resolvedInitialDifficulty: Difficulty = initialDifficulty ?? (daily ? 'medium' : 'easy');
   const colors = useTheme();
@@ -51,8 +63,43 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
   const [currentDifficulty, setCurrentDifficulty] = useState<Difficulty>(resolvedInitialDifficulty);
   const [generating, setGenerating] = useState(true);
 
+  const timer = useGameTimer();
+
+  // Keep a ref to the current paused value for use inside async callbacks
+  const pausedRef = useRef(paused);
+  useEffect(() => { pausedRef.current = paused; }, [paused]);
+
+  // Set to true when a saved game is found but a shell modal is showing (e.g. tutorial),
+  // so the ResumeGameModal is deferred until the shell modal is dismissed.
+  const resumeWhenUnpausedRef = useRef(false);
+
+  useEffect(() => {
+    if (paused) {
+      timer.pause();
+    } else {
+      if (resumeWhenUnpausedRef.current) {
+        resumeWhenUnpausedRef.current = false;
+        setShowResumeModal(true);
+        // Don't resume the timer here — modal handlers (Resume / Start Fresh) start it
+      } else {
+        timer.resume();
+      }
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const savedParsed = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
+  }, [paused]);
+
+  const [displaySeconds, setDisplaySeconds] = useState(0);
+  useEffect(() => {
+    if (!showTimer) return;
+    const id = setInterval(() => setDisplaySeconds(timer.elapsedSeconds), 1000);
+    return () => clearInterval(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showTimer]);
+
+  const { save, load, clear } = usePersistentGameState<SudokuSaveState>('sudoku');
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SudokuSaveState | null>(null);
 
   const buildEmptyState = (puzzle: ReturnType<typeof generateSudoku>): SudokuState => ({
     puzzle,
@@ -66,35 +113,10 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
     isComplete: false,
   });
 
-  const buildSavedState = (): SudokuState | null => {
-    if (!savedParsed?.puzzle || !savedParsed?.board) return null;
-    return {
-      puzzle: savedParsed.puzzle,
-      board: savedParsed.board,
-      notes: (savedParsed.notes as number[][][]).map(row =>
-        row.map(cell => new Set<number>(cell))
-      ),
-      selectedCell: null,
-      pencilMode: false,
-      errors: savedParsed.errors ?? Array.from({ length: 9 }, () => Array(9).fill(false)),
-      isComplete: false,
-    };
-  };
-
   const [state, setState] = useState<SudokuState | null>(null);
   const [canUndo, setCanUndo] = useState(false);
-  const elapsedRef = useRef(0);
 
-  useSaveGame('sudoku', () => {
-    if (!state) return null;
-    return {
-      puzzle: state.puzzle,
-      board: state.board,
-      notes: state.notes.map(row => row.map(cell => Array.from(cell))),
-      errors: state.errors,
-      difficulty: currentDifficulty,
-    };
-  }, !state?.isComplete, [state?.board], elapsedRef);
+  const genTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Undo stack — stored in a ref to avoid stale closures in handlers
   interface HistoryEntry {
@@ -118,40 +140,97 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
     setCanUndo(true);
   }, []);
 
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const genTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   const shakeX = useSharedValue(0);
   const gridScale = useSharedValue(1);
 
-  // Generate the first puzzle off the initial render to avoid blocking the JS thread
+  // Mount effect: load saved game or start fresh
   useEffect(() => {
-    genTimeoutRef.current = setTimeout(() => {
-      const restored = buildSavedState();
-      if (restored) {
-        setState(restored);
+    const checkSaved = async () => {
+      const result = await load();
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        if (pausedRef.current) {
+          // A shell modal (e.g. tutorial) is visible — defer the resume prompt until
+          // paused becomes false, so we never show two full-screen modals at once.
+          resumeWhenUnpausedRef.current = true;
+        } else {
+          setShowResumeModal(true);
+        }
       } else {
-        const puzzle = generateSudoku(resolvedInitialDifficulty);
-        setState(buildEmptyState(puzzle));
+        genTimeoutRef.current = setTimeout(() => {
+          const puzzle = generateSudoku(resolvedInitialDifficulty);
+          setState(buildEmptyState(puzzle));
+          setGenerating(false);
+          timer.start();
+        }, 60);
       }
-      setGenerating(false);
-    }, 60);
+    };
+    checkSaved();
     return () => { if (genTimeoutRef.current) clearTimeout(genTimeoutRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Save effect — only saves once the user has entered at least one digit,
+  // preventing a spurious resume prompt on the very next open.
   useEffect(() => {
-    if (generating || !state) return;
-    timerRef.current = setInterval(() => {
-      elapsedRef.current += 1;
-      setElapsedSeconds(s => s + 1);
-    }, 1000);
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (genTimeoutRef.current) clearTimeout(genTimeoutRef.current);
-    };
-  }, []);
+    if (state?.isComplete) { clear(); return; }
+    if (!state || generating) return;
+    const hasUserEntry = state.board.some((row, r) =>
+      row.some((val, c) => val !== 0 && !state.puzzle.givens[r][c])
+    );
+    if (!hasUserEntry) return;
+    save({
+      puzzle: state.puzzle,
+      board: state.board,
+      notes: state.notes.map(row => row.map(cell => Array.from(cell))),
+      errors: state.errors,
+      difficulty: currentDifficulty,
+    }, timer.elapsedSeconds);
+  }, [state?.board, state?.isComplete, currentDifficulty]);
+
+  // Notify the shell whenever the active difficulty changes
+  useEffect(() => {
+    onDifficultyChange?.(currentDifficulty);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentDifficulty]);
+
+  const handleResume = useCallback(() => {
+    setShowResumeModal(false);
+    if (pendingSavedState) {
+      const restored: SudokuState = {
+        puzzle: pendingSavedState.puzzle,
+        board: pendingSavedState.board,
+        notes: (pendingSavedState.notes as number[][][]).map(row =>
+          row.map(cell => new Set<number>(cell))
+        ),
+        selectedCell: null,
+        pencilMode: false,
+        errors: pendingSavedState.errors ?? Array.from({ length: 9 }, () => Array(9).fill(false)),
+        isComplete: false,
+      };
+      setState(restored);
+      setGenerating(false);
+      if (pendingSavedState.difficulty) {
+        setCurrentDifficulty(pendingSavedState.difficulty);
+      }
+    }
+    timer.restoreAndResume(resumeElapsed);
+    setPendingSavedState(null);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    setShowResumeModal(false);
+    clear();
+    genTimeoutRef.current = setTimeout(() => {
+      const puzzle = generateSudoku(resolvedInitialDifficulty);
+      setState(buildEmptyState(puzzle));
+      setGenerating(false);
+      timer.start();
+    }, 60);
+    setPendingSavedState(null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clear, timer]);
 
   const formatTime = (s: number) => {
     const m = Math.floor(s / 60).toString().padStart(2, '0');
@@ -281,14 +360,14 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
       if (isComplete) {
         setTimeout(() => {
           triggerCelebration();
-          if (timerRef.current) clearInterval(timerRef.current);
-          if (onComplete) onComplete(true, elapsedSeconds);
+          clear();
+          if (onComplete) onComplete(true, timer.elapsedSeconds);
         }, 0);
       }
 
       return { ...prev, board: newBoard, notes: newNotes, errors: newErrors, isComplete };
     });
-  }, [hapticsEnabled, pushUndo, triggerShake, triggerCelebration, checkComplete, hasConflict, onComplete, elapsedSeconds]);
+  }, [hapticsEnabled, pushUndo, triggerShake, triggerCelebration, checkComplete, hasConflict, onComplete, timer, clear]);
 
   const handleErase = useCallback(() => {
     const cur = stateRef.current;
@@ -325,24 +404,20 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
   }, [hapticsEnabled]);
 
   const startNewGame = useCallback((d: Difficulty) => {
-    if (timerRef.current) clearInterval(timerRef.current);
     if (genTimeoutRef.current) clearTimeout(genTimeoutRef.current);
-    setElapsedSeconds(0);
-    elapsedRef.current = 0;
     setCurrentDifficulty(d);
     setGenerating(true);
     undoStackRef.current = [];
     setCanUndo(false);
+    clear();
     genTimeoutRef.current = setTimeout(() => {
       const puzzle = generateSudoku(d);
       setState(buildEmptyState(puzzle));
       setGenerating(false);
-      timerRef.current = setInterval(() => {
-        elapsedRef.current += 1;
-        setElapsedSeconds(s => s + 1);
-      }, 1000);
+      timer.start();
     }, 60);
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clear, timer]);
 
   const gridAnimStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: shakeX.value }, { scale: gridScale.value }],
@@ -362,6 +437,16 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
   const selectedValue = state?.selectedCell
     ? state.board[state.selectedCell[0]][state.selectedCell[1]]
     : 0;
+
+  // Count filled cells for progress summary
+  const filledCount = useMemo(() => {
+    if (!state) return 0;
+    let count = 0;
+    for (let r = 0; r < 9; r++)
+      for (let c = 0; c < 9; c++)
+        if (state.board[r][c] !== 0) count++;
+    return count;
+  }, [state]);
 
   const renderCell = (row: number, col: number) => {
     const s = state!;
@@ -425,10 +510,26 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
 
   return (
     <View style={styles.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🔢"
+        gameName="Sudoku"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `${filledCount} of 81 cells filled` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       {/* Header row — difficulty badge only; timer is shown in game header */}
       <View style={styles.headerRow}>
         <View />
         <View style={styles.headerRight}>
+          {showTimer && (
+            <View style={styles.timerPill}>
+              <Ionicons name="time-outline" size={13} color={colors.inkSoft} />
+              <Text style={styles.timerText}>{formatTime(displaySeconds)}</Text>
+            </View>
+          )}
           {state?.pencilMode && (
             <View style={[styles.badge, { backgroundColor: colors.word.bg }]}>
               <Ionicons name="pencil" size={11} color={colors.word.ink} />
@@ -444,7 +545,7 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
       </View>
 
       {/* Grid or loading */}
-      {generating ? (
+      {generating || !state ? (
         <View style={styles.generatingBox}>
           <ActivityIndicator size="large" color={colors.logic.ink} />
           <Text style={styles.generatingText}>Building puzzle…</Text>
@@ -467,7 +568,7 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
           <Ionicons name="checkmark-circle" size={20} color={colors.success} />
           <Text style={styles.completeBannerText}>Solved!</Text>
           <View style={{ flex: 1 }} />
-          <Text style={styles.completeTime}>{formatTime(elapsedSeconds)}</Text>
+          <Text style={styles.completeTime}>{formatTime(timer.elapsedSeconds)}</Text>
         </View>
       )}
 

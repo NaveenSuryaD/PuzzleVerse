@@ -19,7 +19,9 @@ interface GameProgress {
 interface ProgressState {
   games: Record<string, GameProgress>;
   overallStreak: number;
+  maxOverallStreak: number;
   lastOverallPlayDate: string;
+  playedDates: string[];           // ISO date strings where user played any game
   achievements: string[];
   favoritedGames: string[];
   levels: Record<string, number>;  // persistent level per leveled game
@@ -45,7 +47,9 @@ export const useProgressStore = create<ProgressState>()(
     (set, get) => ({
       games: {},
       overallStreak: 0,
+      maxOverallStreak: 0,
       lastOverallPlayDate: '',
+      playedDates: [],
       achievements: [],
       favoritedGames: [],
       levels: {},
@@ -101,19 +105,38 @@ export const useProgressStore = create<ProgressState>()(
           lastPlayedDate: todayStr,
         };
 
-        // Overall streak: count days in a row ANY game was played
-        const alreadyPlayedToday = state.lastOverallPlayDate === todayStr;
-        const overallContinues = alreadyPlayedToday || isYesterday(state.lastOverallPlayDate);
-        const newOverallStreak = alreadyPlayedToday
-          ? state.overallStreak
-          : overallContinues
-            ? state.overallStreak + 1
-            : 1;
+        // Overall streak: consecutive calendar days with at least one game played
+        const playedDates = state.playedDates ?? [];
+        const alreadyPlayedToday = playedDates.includes(todayStr);
+
+        let newOverallStreak: number;
+        if (alreadyPlayedToday) {
+          // Already played today — streak unchanged
+          newOverallStreak = state.overallStreak;
+        } else {
+          const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+          if (playedDates.includes(yesterday)) {
+            // Played yesterday — extend streak
+            newOverallStreak = state.overallStreak + 1;
+          } else if (playedDates.length === 0) {
+            // First ever game
+            newOverallStreak = 1;
+          } else {
+            // Missed a day — reset to 1
+            newOverallStreak = 1;
+          }
+        }
+
+        const newPlayedDates = alreadyPlayedToday
+          ? playedDates
+          : [...playedDates, todayStr];
 
         set({
           games: { ...state.games, [gameId]: updated },
           overallStreak: newOverallStreak,
+          maxOverallStreak: Math.max(newOverallStreak, state.maxOverallStreak ?? 0),
           lastOverallPlayDate: todayStr,
+          playedDates: newPlayedDates,
         });
       },
 

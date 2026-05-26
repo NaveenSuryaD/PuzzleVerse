@@ -1,58 +1,112 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { generateAnagram } from './generator';
 import type { AnagramPuzzle } from './types';
 import * as Haptics from 'expo-haptics';
-import { useSaveGame } from '../../utils/gameSave';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
-  savedStateJSON?: string;
+  paused?: boolean;
 }
 
-export function AnagramGame({ onComplete, onBack, savedStateJSON }: Props) {
-  const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
+interface SaveState {
+  puzzle: AnagramPuzzle;
+  placed: (string | null)[];
+  usedIndices: number[];
+  round: number;
+  score: number;
+}
 
+export function AnagramGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
+  const colors = useTheme();
+
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const saved = useMemo(() => { try { return savedStateJSON ? JSON.parse(savedStateJSON) : null; } catch { return null; } }, []);
-  const [puzzle, setPuzzle] = useState<AnagramPuzzle>(() => saved?.puzzle ?? generateAnagram());
-  const [placed, setPlaced] = useState<(string | null)[]>(() => saved?.placed ?? Array(puzzle.word.length).fill(null));
-  const [usedIndices, setUsedIndices] = useState<Set<number>>(new Set(saved?.usedIndices ?? []));
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SaveState>('anagram');
+
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SaveState | null>(null);
+
+  const [puzzle, setPuzzle] = useState<AnagramPuzzle>(() => generateAnagram());
+  const [placed, setPlaced] = useState<(string | null)[]>(() => Array(puzzle.word.length).fill(null));
+  const [usedIndices, setUsedIndices] = useState<Set<number>>(new Set());
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
-  const [round, setRound] = useState<number>(() => saved?.round ?? 1);
-  const [score, setScore] = useState<number>(() => saved?.score ?? 0);
-
-  useSaveGame('anagram', () => ({ puzzle, placed, usedIndices: Array.from(usedIndices), round, score }), !done, [placed, round, score], elapsedRef);
+  const [round, setRound] = useState<number>(1);
+  const [score, setScore] = useState<number>(0);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Mount effect: load saved state
   useEffect(() => {
+    load().then(result => {
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        const puz = generateAnagram();
+        setPuzzle(puz);
+        setPlaced(Array(puz.word.length).fill(null));
+        setUsedIndices(new Set());
+        timer.start();
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Save effect: save on state changes
+  useEffect(() => {
+    if (!done) {
+      save({ puzzle, placed, usedIndices: Array.from(usedIndices), round, score }, timer.elapsedSeconds);
+    }
+  }, [placed, round, score, done, puzzle, usedIndices, timer.elapsedSeconds, save]);
+
+  const handleResume = useCallback(() => {
+    if (pendingSavedState) {
+      setPuzzle(pendingSavedState.puzzle);
+      setPlaced(pendingSavedState.placed);
+      setUsedIndices(new Set(pendingSavedState.usedIndices));
+      setRound(pendingSavedState.round);
+      setScore(pendingSavedState.score);
+    }
+    setShowResumeModal(false);
+    timer.restoreAndResume(resumeElapsed);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    clear();
+    setShowResumeModal(false);
     const puz = generateAnagram();
     setPuzzle(puz);
     setPlaced(Array(puz.word.length).fill(null));
     setUsedIndices(new Set());
-  }, []);
-
-  useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, []);
+    setRound(1);
+    setScore(0);
+    timer.start();
+  }, [clear, timer]);
 
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    timer.pause();
+    clear();
     setWon(w);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer, clear]);
 
   const initPuzzle = useCallback(() => {
     const puz = generateAnagram();
@@ -119,6 +173,16 @@ export function AnagramGame({ onComplete, onBack, savedStateJSON }: Props) {
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🔤"
+        gameName="Anagram"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `Round ${pendingSavedState.round} of 5 · Score: ${pendingSavedState.score}` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <Text style={s.round}>Round {round} / 5</Text>
       <Text style={s.instruction}>Unscramble the word</Text>
 
@@ -180,11 +244,9 @@ export function AnagramGame({ onComplete, onBack, savedStateJSON }: Props) {
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
               setDone(false);
-              completedRef.current = false;
               setRound(1);
               setScore(0);
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
               initPuzzle();
             }}>
               <Text style={s.modalBtnText}>Play Again</Text>
@@ -204,11 +266,11 @@ const makeStyles = (colors: ReturnType<typeof useTheme>) => StyleSheet.create({
   slot: { width: 42, height: 52, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 2 },
   slotEmpty: { borderColor: colors.divider, backgroundColor: colors.surface },
   slotFilled: { borderColor: colors.word.ink, backgroundColor: colors.word.bg },
-  slotLetter: { fontFamily: fonts.black, fontSize: 22, color: colors.ink },
+  slotLetter: { fontFamily: fonts.black, fontSize: 22, color: colors.ink, width: 42, textAlign: 'center' },
   scrambledRow: { flexDirection: 'row', gap: 10, flexWrap: 'wrap', justifyContent: 'center', marginBottom: 32 },
   scrambledBtn: { width: 50, height: 50, borderRadius: 12, backgroundColor: colors.word.bg, alignItems: 'center', justifyContent: 'center' },
   scrambledUsed: { backgroundColor: colors.rule, opacity: 0.4 },
-  scrambledLetter: { fontFamily: fonts.black, fontSize: 22, color: colors.word.ink },
+  scrambledLetter: { fontFamily: fonts.black, fontSize: 22, color: colors.word.ink, width: 50, textAlign: 'center' },
   scrambledLetterUsed: { color: colors.inkMuted },
   submitBtn: { backgroundColor: colors.ink, paddingHorizontal: 40, paddingVertical: 14, borderRadius: 999 },
   submitDisabled: { opacity: 0.35 },
