@@ -1,27 +1,30 @@
 import type { Color, ColorSortState, Tube } from './types';
 
-const COLORS: Color[] = ['red', 'blue', 'green', 'yellow', 'purple'];
-const TUBE_COUNT = 6; // 5 color tubes + 1 empty buffer
+const ALL_COLORS: Color[] = ['red', 'blue', 'green', 'yellow', 'purple', 'orange', 'cyan'];
 const BALLS_PER_TUBE = 4;
 
-export function generateColorSort(): ColorSortState {
-  // Start with sorted state
-  const sorted: Tube[] = COLORS.map(c => [c, c, c, c]);
-  sorted.push([]); // empty tube
+export function getColorCountForLevel(level: number): number {
+  if (level <= 3) return 5;
+  if (level <= 6) return 6;
+  return 7;
+}
 
-  // Shuffle all balls
-  const allBalls: Color[] = sorted.slice(0, 5).flat();
+export function generateColorSort(level = 1): ColorSortState {
+  const colorCount = getColorCountForLevel(level);
+  const emptyCount = level <= 5 ? 1 : 2;
+  const usedColors = ALL_COLORS.slice(0, colorCount) as Color[];
+
+  const allBalls: Color[] = usedColors.flatMap(c => [c, c, c, c]);
   for (let i = allBalls.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [allBalls[i], allBalls[j]] = [allBalls[j], allBalls[i]];
   }
 
-  // Redistribute to 5 tubes
   const tubes: Tube[] = [];
-  for (let i = 0; i < 5; i++) {
-    tubes.push(allBalls.slice(i * 4, i * 4 + 4));
+  for (let i = 0; i < colorCount; i++) {
+    tubes.push(allBalls.slice(i * 4, i * 4 + 4) as Tube);
   }
-  tubes.push([]); // empty
+  for (let i = 0; i < emptyCount; i++) tubes.push([]);
 
   return { tubes };
 }

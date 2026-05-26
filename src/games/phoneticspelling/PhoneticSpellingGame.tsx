@@ -1,13 +1,48 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  paused?: boolean;
 }
+
+// Alternative words for each letter — used as plausible wrong options
+// All words start with the same letter as the question letter
+const LETTER_ALTS: Record<string, string[]> = {
+  A: ['ANCHOR', 'AMBER', 'ARROW', 'ATLAS'],
+  B: ['BANNER', 'BRIDGE', 'BADGE', 'BARON'],
+  C: ['COPPER', 'CASTLE', 'COBRA', 'CEDAR'],
+  D: ['DAGGER', 'DOME', 'DRAKE', 'DUSK'],
+  E: ['EAGLE', 'EMBER', 'ELDER', 'ENVOY'],
+  F: ['FALCON', 'FERRY', 'FLAME', 'FROST'],
+  G: ['GAMMA', 'GECKO', 'GHOST', 'GRAVEL'],
+  H: ['HARBOR', 'HAWK', 'HAZE', 'HERALD'],
+  I: ['ICEBERG', 'IRON', 'IVORY', 'IGLOO'],
+  J: ['JUNGLE', 'JADE', 'JASPER', 'JESTER'],
+  K: ['KELP', 'KNIGHT', 'KNOT', 'KYOTO'],
+  L: ['LEMON', 'LUNAR', 'LOGIC', 'LANCE'],
+  M: ['MAPLE', 'MARBLE', 'MANGO', 'METRO'],
+  N: ['NEON', 'NOBLE', 'NOMAD', 'NORTH'],
+  O: ['ONYX', 'ORBIT', 'OPAL', 'OTTER'],
+  P: ['PILOT', 'PRISM', 'PANDA', 'PIXEL'],
+  Q: ['QUARTZ', 'QUEEN', 'QUOTA', 'QUEST'],
+  R: ['RADAR', 'RAPID', 'RAVEN', 'RIDGE'],
+  S: ['SOLAR', 'STORM', 'SAPPHIRE', 'SCOUT'],
+  T: ['TIGER', 'TORCH', 'TERRA', 'TURBO'],
+  U: ['ULTRA', 'UMBRA', 'URBAN', 'UNITY'],
+  V: ['VIPER', 'VAULT', 'VALOR', 'VISTA'],
+  W: ['WALRUS', 'WINTER', 'WARDEN', 'WAVE'],
+  X: ['XENON', 'XERIC', 'XMAS', 'XYLEM'],
+  Y: ['YELLOW', 'YONDER', 'YACHT', 'YIELD'],
+  Z: ['ZEBRA', 'ZENITH', 'ZEPHYR', 'ZINC'],
+};
 
 // Phonetic Spelling: match NATO phonetic alphabet words to letters
 const NATO = [
@@ -50,15 +85,32 @@ function shuffle<T>(arr: T[]): T[] {
 
 type Mode = 'letterToWord' | 'wordToLetter';
 
-export function PhoneticSpellingGame({ onComplete, onBack }: Props) {
-  const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
+interface SavedState {
+  questions: typeof NATO;
+  round: number;
+  score: number;
+}
 
-  const [questions] = useState(() => shuffle([...NATO]).slice(0, 10));
-  const [round, setRound] = useState(0);
-  const [score, setScore] = useState(0);
+export function PhoneticSpellingGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
+  const colors = useTheme();
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SavedState>('phonetic-spelling');
+
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SavedState | null>(null);
+
+  const [questions, setQuestions] = useState<typeof NATO>(() => shuffle([...NATO]).slice(0, 10));
+  const [round, setRound] = useState<number>(0);
+  const [score, setScore] = useState<number>(0);
   const [chosen, setChosen] = useState<string | null>(null);
   const [mode] = useState<Mode>('letterToWord');
   const [done, setDone] = useState(false);
@@ -69,24 +121,66 @@ export function PhoneticSpellingGame({ onComplete, onBack }: Props) {
 
   const choices = useMemo(() => {
     if (!current) return [];
-    const others = NATO.filter(n => n.letter !== current.letter);
-    const wrong = shuffle(others).slice(0, 3);
-    return shuffle([current, ...wrong]);
+    // Wrong options must start with the same letter as the correct answer
+    const alts = LETTER_ALTS[current.letter] ?? [];
+    const wrong = shuffle(alts).slice(0, 3);
+    // Pad with other-letter NATO words if not enough alts (shouldn't happen)
+    const padded = wrong.length < 3
+      ? [...wrong, ...shuffle(NATO.filter(n => n.letter !== current.letter)).map(n => n.word)].slice(0, 3)
+      : wrong;
+    return shuffle([current.word, ...padded]);
   }, [current]);
 
+  // Mount effect: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    load().then(result => {
+      if (result.found && result.gameState) {
+        setResumeElapsed(result.elapsedSeconds);
+        setPendingSavedState(result.gameState);
+        setShowResumeModal(true);
+        timer.pause();
+      } else {
+        timer.start();
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Save effect
+  useEffect(() => {
+    if (!done) {
+      save({ questions, round, score }, timer.elapsedSeconds);
+    }
+  }, [round, score, done, save, timer.elapsedSeconds, questions]);
+
+  const handleResume = useCallback(() => {
+    setShowResumeModal(false);
+    if (pendingSavedState) {
+      setQuestions(pendingSavedState.questions);
+      setRound(pendingSavedState.round);
+      setScore(pendingSavedState.score);
+    }
+    timer.restoreAndResume(resumeElapsed);
+    setPendingSavedState(null);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    setShowResumeModal(false);
+    setPendingSavedState(null);
+    clear();
+    setQuestions(shuffle([...NATO]).slice(0, 10));
+    setRound(0);
+    setScore(0);
+    setChosen(null);
+    timer.start();
+  }, [clear, timer]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    clear();
     setWon(w);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer.elapsedSeconds, clear]);
 
   const handleChoice = useCallback((word: string) => {
     if (chosen !== null) return;
@@ -107,6 +201,16 @@ export function PhoneticSpellingGame({ onComplete, onBack }: Props) {
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🔊"
+        gameName="Phonetic Spelling"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `Round ${pendingSavedState.round + 1} / ${pendingSavedState.questions.length}  ·  Score: ${pendingSavedState.score}` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <Text style={s.round}>Round {round+1} / {questions.length}  ·  Score: {score}</Text>
       <Text style={s.instruction}>NATO phonetic word for this letter?</Text>
 
@@ -115,24 +219,24 @@ export function PhoneticSpellingGame({ onComplete, onBack }: Props) {
       </View>
 
       <View style={s.choices}>
-        {choices.map(ch => {
+        {choices.map(word => {
           let bg = colors.surface;
           let border = colors.divider;
-          if (chosen === ch.word) {
-            bg = ch.word === current.word ? colors.number.bg : '#FFE0E0';
-            border = ch.word === current.word ? colors.number.ink : colors.danger;
-          } else if (chosen !== null && ch.word === current.word) {
+          if (chosen === word) {
+            bg = word === current.word ? colors.number.bg : '#FFE0E0';
+            border = word === current.word ? colors.number.ink : colors.danger;
+          } else if (chosen !== null && word === current.word) {
             bg = colors.number.bg;
             border = colors.number.ink;
           }
           return (
             <TouchableOpacity
-              key={ch.word}
+              key={word}
               style={[s.choice, { backgroundColor: bg, borderColor: border }]}
-              onPress={() => handleChoice(ch.word)}
+              onPress={() => handleChoice(word)}
               activeOpacity={0.8}
             >
-              <Text style={s.choiceText}>{ch.word}</Text>
+              <Text style={s.choiceText}>{word}</Text>
             </TouchableOpacity>
           );
         })}
@@ -153,10 +257,10 @@ export function PhoneticSpellingGame({ onComplete, onBack }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
+              setQuestions(shuffle([...NATO]).slice(0, 10));
               setRound(0); setScore(0); setChosen(null);
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Play Again</Text>
             </TouchableOpacity>

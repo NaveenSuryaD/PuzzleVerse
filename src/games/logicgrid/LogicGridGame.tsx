@@ -1,12 +1,16 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  paused?: boolean;
 }
 
 const PUZZLES = [
@@ -34,13 +38,25 @@ const PUZZLES = [
 
 type GridState = Record<string, Record<string, boolean | null>>;
 
-export function LogicGridGame({ onComplete, onBack }: Props) {
-  const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
+interface SaveState {
+  puzIdx: number;
+  grid: GridState;
+}
 
-  const [puzIdx, setPuzIdx] = useState(0);
+export function LogicGridGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
+  const colors = useTheme();
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SaveState>('logic-grid');
+
+  const [puzIdx, setPuzIdx] = useState<number>(0);
   const puzzle = PUZZLES[puzIdx];
 
   const initGrid = (): GridState => {
@@ -52,25 +68,63 @@ export function LogicGridGame({ onComplete, onBack }: Props) {
     return g;
   };
 
-  const [grid, setGrid] = useState<GridState>(initGrid);
+  const [grid, setGrid] = useState<GridState>(() => initGrid());
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
 
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SaveState | null>(null);
+
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Mount effect: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    (async () => {
+      const result = await load();
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        timer.start();
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Save effect
+  useEffect(() => {
+    if (!done && !showResumeModal) {
+      save({ puzIdx, grid }, timer.elapsedSeconds);
+    }
+  }, [puzIdx, grid, timer.elapsedSeconds, done, showResumeModal, save]);
+
+  const handleResume = useCallback(() => {
+    if (pendingSavedState) {
+      setPuzIdx(pendingSavedState.puzIdx);
+      setGrid(pendingSavedState.grid);
+    }
+    setShowResumeModal(false);
+    timer.restoreAndResume(resumeElapsed);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    clear();
+    setPuzIdx(0);
+    setGrid(initGrid());
+    setShowResumeModal(false);
+    timer.start();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clear, timer]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    timer.pause();
+    clear();
     setWon(w);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer, clear]);
 
   const checkSolved = useCallback((g: GridState) => {
     for (const p of puzzle.people) {
@@ -98,6 +152,16 @@ export function LogicGridGame({ onComplete, onBack }: Props) {
 
   return (
     <ScrollView contentContainerStyle={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🧠"
+        gameName="Logic Grid"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `Puzzle ${pendingSavedState.puzIdx + 1}` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <Text style={s.title}>Logic Grid</Text>
       <Text style={s.subtitle}>Use clues to match each person with their attribute</Text>
 
@@ -166,12 +230,11 @@ export function LogicGridGame({ onComplete, onBack }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
               const next = (puzIdx + 1) % PUZZLES.length;
               setPuzIdx(next);
               setGrid(initGrid());
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Next Puzzle</Text>
             </TouchableOpacity>

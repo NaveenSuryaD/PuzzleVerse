@@ -1,37 +1,91 @@
-import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme, type ThemeColors } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { generatePatterns } from './generator';
+import type { PatternPuzzle } from './types';
 import { PatternItemView } from './PatternItem';
 import * as Haptics from 'expo-haptics';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 const TOTAL = 8;
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  paused?: boolean;
 }
 
-export function PatternRecogGame({ onComplete, onBack }: Props) {
+interface SaveState {
+  puzzles: PatternPuzzle[];
+  idx: number;
+  correct: number;
+}
+
+export function PatternRecogGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
 
-  const [puzzles, setPuzzles] = useState(() => generatePatterns(TOTAL));
-  const [idx, setIdx] = useState(0);
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SaveState>('pattern-recog');
+
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SaveState | null>(null);
+
+  const [puzzles, setPuzzles] = useState<PatternPuzzle[]>(() => generatePatterns(TOTAL));
+  const [idx, setIdx] = useState<number>(0);
   const [selected, setSelected] = useState<number | null>(null);
-  const [correct, setCorrect] = useState(0);
+  const [correct, setCorrect] = useState<number>(0);
   const [flash, setFlash] = useState<'correct' | 'wrong' | null>(null);
   const [done, setDone] = useState(false);
 
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
-
+  // Mount effect: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    load().then(result => {
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        timer.start();
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Save effect: save on state changes
+  useEffect(() => {
+    if (!done) {
+      save({ puzzles, idx, correct }, timer.elapsedSeconds);
+    }
+  }, [idx, correct, done, puzzles, timer.elapsedSeconds, save]);
+
+  const handleResume = useCallback(() => {
+    if (pendingSavedState) {
+      setPuzzles(pendingSavedState.puzzles);
+      setIdx(pendingSavedState.idx);
+      setCorrect(pendingSavedState.correct);
+    }
+    setShowResumeModal(false);
+    timer.restoreAndResume(resumeElapsed);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    clear();
+    setShowResumeModal(false);
+    timer.start();
+  }, [clear, timer]);
 
   const puzzle = puzzles[Math.min(idx, TOTAL - 1)];
 
@@ -53,19 +107,28 @@ export function PatternRecogGame({ onComplete, onBack }: Props) {
       setSelected(null);
       const nextIdx = idx + 1;
       if (nextIdx >= TOTAL) {
-        if (completedRef.current) return;
-        completedRef.current = true;
-        if (timerRef.current) clearInterval(timerRef.current);
+        timer.pause();
+        clear();
         setDone(true);
-        onComplete(true, elapsedRef.current);
+        onComplete(correct + (isCorrect ? 1 : 0) >= 6, timer.elapsedSeconds);
       } else {
         setIdx(nextIdx);
       }
     }, 600);
-  }, [selected, flash, puzzle, idx, onComplete]);
+  }, [selected, flash, puzzle, idx, onComplete, correct, timer, clear]);
 
   return (
     <View style={s.root}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🔷"
+        gameName="Pattern Recognition"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `Question ${pendingSavedState.idx + 1} of ${TOTAL}` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       {/* Header */}
       <View style={s.header}>
         <Text style={s.progressText}>{idx + 1} / {TOTAL}</Text>
@@ -136,13 +199,11 @@ export function PatternRecogGame({ onComplete, onBack }: Props) {
               style={[s.btn, { backgroundColor: colors.ink }]}
               onPress={() => {
                 setDone(false);
-                completedRef.current = false;
                 setIdx(0);
                 setSelected(null);
                 setCorrect(0);
-                elapsedRef.current = 0;
                 setPuzzles(generatePatterns(TOTAL));
-                timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+                timer.start();
               }}
               activeOpacity={0.8}
             >

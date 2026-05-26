@@ -1,13 +1,23 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { HIDDEN_WORD_PUZZLES } from './puzzles';
 import * as Haptics from 'expo-haptics';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  paused?: boolean;
+}
+
+interface SaveState {
+  puzzles: typeof HIDDEN_WORD_PUZZLES;
+  round: number;
+  score: number;
 }
 
 function shuffle<T>(arr: T[]): T[] {
@@ -19,34 +29,76 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-export function HiddenWordsGame({ onComplete, onBack }: Props) {
+export function HiddenWordsGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
 
-  const [puzzles] = useState(() => shuffle([...HIDDEN_WORD_PUZZLES]).slice(0, 10));
-  const [round, setRound] = useState(0);
-  const [score, setScore] = useState(0);
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SaveState>('hidden-words');
+
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SaveState | null>(null);
+
+  const [puzzles] = useState<typeof HIDDEN_WORD_PUZZLES>(() => shuffle([...HIDDEN_WORD_PUZZLES]).slice(0, 10));
+  const [round, setRound] = useState<number>(0);
+  const [score, setScore] = useState<number>(0);
   const [selected, setSelected] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Mount effect: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    load().then(result => {
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        timer.start();
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Save effect: save on state changes
+  useEffect(() => {
+    if (!done) {
+      save({ puzzles, round, score }, timer.elapsedSeconds);
+    }
+  }, [round, done, puzzles, score, timer.elapsedSeconds, save]);
+
+  const handleResume = useCallback(() => {
+    if (pendingSavedState) {
+      setRound(pendingSavedState.round);
+      setScore(pendingSavedState.score);
+    }
+    setShowResumeModal(false);
+    timer.restoreAndResume(resumeElapsed);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    clear();
+    setShowResumeModal(false);
+    timer.start();
+  }, [clear, timer]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    timer.pause();
+    clear();
     setWon(w);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer, clear]);
 
   const current = puzzles[round];
   const choices = useMemo(() => {
@@ -78,6 +130,16 @@ export function HiddenWordsGame({ onComplete, onBack }: Props) {
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🔍"
+        gameName="Hidden Words"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `Round ${pendingSavedState.round + 1} of 10 · Score: ${pendingSavedState.score}` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <Text style={s.round}>Round {round + 1} / 10  ·  Score: {score}</Text>
       <Text style={s.instruction}>Find the hidden word inside:</Text>
 
@@ -138,10 +200,9 @@ export function HiddenWordsGame({ onComplete, onBack }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
               setRound(0); setScore(0); setSelected(null);
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Play Again</Text>
             </TouchableOpacity>

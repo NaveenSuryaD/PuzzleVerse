@@ -85,9 +85,9 @@ interface ConfettiProps {
 }
 
 export function Confetti({ active, count = 40, duration = 1400 }: ConfettiProps) {
-  if (!active) return null;
+  const particles = React.useMemo(() => generateParticles(count), [count]);
 
-  const particles = React.useMemo(() => generateParticles(count), []);
+  if (!active) return null;
 
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="none">

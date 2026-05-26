@@ -19,14 +19,18 @@ interface GameProgress {
 interface ProgressState {
   games: Record<string, GameProgress>;
   overallStreak: number;
+  maxOverallStreak: number;
   lastOverallPlayDate: string;
+  playedDates: string[];           // ISO date strings where user played any game
   achievements: string[];
   favoritedGames: string[];
+  levels: Record<string, number>;  // persistent level per leveled game
   recordGame: (gameId: string, won: boolean, timeSeconds: number, hintsUsed?: number, guessCount?: number) => void;
   recordDailyComplete: (gameId: string, date: string, won: boolean) => void;
   incrementHints: (gameId: string) => void;
   toggleFavorite: (gameId: string) => void;
   unlockAchievement: (achievementId: string) => void;
+  setGameLevel: (gameId: string, level: number) => void;
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -43,9 +47,16 @@ export const useProgressStore = create<ProgressState>()(
     (set, get) => ({
       games: {},
       overallStreak: 0,
+      maxOverallStreak: 0,
       lastOverallPlayDate: '',
+      playedDates: [],
       achievements: [],
       favoritedGames: [],
+      levels: {},
+
+      setGameLevel: (gameId, level) => {
+        set({ levels: { ...get().levels, [gameId]: level } });
+      },
 
       recordGame: (gameId, won, timeSeconds, hintsUsed = 0, guessCount) => {
         const state = get();
@@ -68,9 +79,13 @@ export const useProgressStore = create<ProgressState>()(
         }
         const todayStr = today();
 
-        // Per-game streak
-        const gameStreakContinues = existing.lastPlayedDate === todayStr || isYesterday(existing.lastPlayedDate);
-        const newStreak = won ? (gameStreakContinues ? existing.currentStreak + 1 : 1) : 0;
+        // Per-game streak: consecutive DAYS with at least one game completed (win or loss)
+        const alreadyPlayedTodayForGame = existing.lastPlayedDate === todayStr;
+        const newStreak = alreadyPlayedTodayForGame
+          ? existing.currentStreak
+          : isYesterday(existing.lastPlayedDate)
+            ? existing.currentStreak + 1
+            : 1;
 
         const updated: GameProgress = {
           ...existing,
@@ -90,19 +105,38 @@ export const useProgressStore = create<ProgressState>()(
           lastPlayedDate: todayStr,
         };
 
-        // Overall streak: count days in a row ANY game was played
-        const alreadyPlayedToday = state.lastOverallPlayDate === todayStr;
-        const overallContinues = alreadyPlayedToday || isYesterday(state.lastOverallPlayDate);
-        const newOverallStreak = alreadyPlayedToday
-          ? state.overallStreak
-          : overallContinues
-            ? state.overallStreak + 1
-            : 1;
+        // Overall streak: consecutive calendar days with at least one game played
+        const playedDates = state.playedDates ?? [];
+        const alreadyPlayedToday = playedDates.includes(todayStr);
+
+        let newOverallStreak: number;
+        if (alreadyPlayedToday) {
+          // Already played today — streak unchanged
+          newOverallStreak = state.overallStreak;
+        } else {
+          const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+          if (playedDates.includes(yesterday)) {
+            // Played yesterday — extend streak
+            newOverallStreak = state.overallStreak + 1;
+          } else if (playedDates.length === 0) {
+            // First ever game
+            newOverallStreak = 1;
+          } else {
+            // Missed a day — reset to 1
+            newOverallStreak = 1;
+          }
+        }
+
+        const newPlayedDates = alreadyPlayedToday
+          ? playedDates
+          : [...playedDates, todayStr];
 
         set({
           games: { ...state.games, [gameId]: updated },
           overallStreak: newOverallStreak,
+          maxOverallStreak: Math.max(newOverallStreak, state.maxOverallStreak ?? 0),
           lastOverallPlayDate: todayStr,
+          playedDates: newPlayedDates,
         });
       },
 

@@ -1,12 +1,16 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  paused?: boolean;
 }
 
 // Number Maze: move through a grid, must visit cells in ascending order
@@ -37,31 +41,96 @@ const PUZZLES = [
 
 const CELL_SIZE = 68;
 
-export function NumberMazeGame({ onComplete, onBack }: Props) {
-  const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
+interface SavedState {
+  puzIdx: number;
+  pos: [number, number];
+  nextNum: number;
+  visited: string[];
+}
 
-  const [puzIdx, setPuzIdx] = useState(0);
+export function NumberMazeGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
+  const colors = useTheme();
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SavedState>('number-maze');
+
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SavedState | null>(null);
+
+  const [puzIdx, setPuzIdx] = useState<number>(0);
   const puz = PUZZLES[puzIdx];
 
   // Find starting position (cell with value 1)
-  const startPos = useMemo(() => {
+  const startPos = useMemo((): [number, number] => {
     for (let r = 0; r < puz.rows; r++)
       for (let c = 0; c < puz.cols; c++)
         if (puz.grid[r][c] === 1) return [r, c];
     return [0, 0];
   }, [puz]);
 
-  const [pos, setPos] = useState(startPos);
-  const [nextNum, setNextNum] = useState(2); // next required number to collect
-  const [visited, setVisited] = useState<Set<string>>(new Set(['0,0']));
+  const [pos, setPos] = useState<[number,number]>(startPos);
+  const [nextNum, setNextNum] = useState<number>(2);
+  const [visited, setVisited] = useState<Set<string>>(() => new Set(['0,0']));
   const [path, setPath] = useState<[number,number][]>([[startPos[0], startPos[1]]]);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
+
+  // Mount effect: load saved state
+  useEffect(() => {
+    load().then(result => {
+      if (result.found && result.gameState) {
+        setResumeElapsed(result.elapsedSeconds);
+        setPendingSavedState(result.gameState);
+        setShowResumeModal(true);
+        timer.pause();
+      } else {
+        timer.start();
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Save effect
+  useEffect(() => {
+    if (!done) {
+      save({ puzIdx, pos, nextNum, visited: [...visited] }, timer.elapsedSeconds);
+    }
+  }, [puzIdx, pos, nextNum, visited, done, save, timer.elapsedSeconds]);
+
+  const handleResume = useCallback(() => {
+    setShowResumeModal(false);
+    if (pendingSavedState) {
+      setPuzIdx(pendingSavedState.puzIdx);
+      setPos(pendingSavedState.pos);
+      setNextNum(pendingSavedState.nextNum);
+      setVisited(new Set(pendingSavedState.visited));
+    }
+    timer.restoreAndResume(resumeElapsed);
+    setPendingSavedState(null);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    setShowResumeModal(false);
+    setPendingSavedState(null);
+    clear();
+    setPuzIdx(0);
+    setPos(startPos);
+    setNextNum(2);
+    const startKey = `${startPos[0]},${startPos[1]}`;
+    setVisited(new Set([startKey]));
+    setPath([[startPos[0], startPos[1]]]);
+    timer.start();
+  }, [clear, startPos, timer]);
 
   useEffect(() => {
     // Reset when puzzle changes
@@ -72,19 +141,12 @@ export function NumberMazeGame({ onComplete, onBack }: Props) {
     setPath([[startPos[0], startPos[1]]]);
   }, [puzIdx, startPos]);
 
-  useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, []);
-
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    clear();
     setWon(w);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer.elapsedSeconds, clear]);
 
   const move = useCallback((dr: number, dc: number) => {
     const [r, c] = pos;
@@ -118,6 +180,16 @@ export function NumberMazeGame({ onComplete, onBack }: Props) {
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🔢"
+        gameName="Number Maze"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `Next: ${pendingSavedState.nextNum} / ${puz.maxNum}` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <Text style={s.title}>Number Maze</Text>
       <Text style={s.subtitle}>Visit numbered cells in order 1→{puz.maxNum}</Text>
       <Text style={s.progress}>Next: {nextNum}</Text>
@@ -188,11 +260,10 @@ export function NumberMazeGame({ onComplete, onBack }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
               const next = (puzIdx + 1) % PUZZLES.length;
               setPuzIdx(next);
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Next Puzzle</Text>
             </TouchableOpacity>

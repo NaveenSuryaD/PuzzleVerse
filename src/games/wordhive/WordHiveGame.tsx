@@ -1,14 +1,18 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView, Dimensions } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import * as Haptics from 'expo-haptics';
 import { playSound } from '../../audio/sounds';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  paused?: boolean;
 }
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -53,15 +57,32 @@ function computeMaxScore(words: string[]): number {
   return words.reduce((sum, w) => sum + (w.length <= 4 ? 1 : w.length), 0);
 }
 
-export function WordHiveGame({ onComplete, onBack }: Props) {
+interface SaveState {
+  hiveIdx: number;
+  found: string[];
+}
+
+export function WordHiveGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
   const hapticsEnabled = useSettingsStore(s => s.hapticsEnabled);
   const reducedMotion = useSettingsStore(s => s.reducedMotion);
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
 
-  const [hiveIdx] = useState(() => Math.floor(Math.random() * HIVE_SETS.length));
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SaveState>('word-hive');
+
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SaveState | null>(null);
+
+  const [hiveIdx, setHiveIdx] = useState<number>(() => Math.floor(Math.random() * HIVE_SETS.length));
   const hive = HIVE_SETS[hiveIdx];
   const maxScore = useMemo(() => computeMaxScore(hive.validWords), [hive]);
 
@@ -72,6 +93,7 @@ export function WordHiveGame({ onComplete, onBack }: Props) {
   const [isPangram, setIsPangram] = useState(false);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
+
   const [shuffledOuter, setShuffledOuter] = useState(() => {
     const outer = hive.letters.filter(l => l !== hive.center);
     return [...outer].sort(() => Math.random() - 0.5);
@@ -79,19 +101,53 @@ export function WordHiveGame({ onComplete, onBack }: Props) {
 
   const s = useMemo(() => makeStyles(colors, SCREEN_W), [colors]);
 
+  // Mount effect: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    load().then(result => {
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        timer.start();
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Save effect: save on state changes
+  useEffect(() => {
+    if (!done) {
+      save({ hiveIdx, found }, timer.elapsedSeconds);
+    }
+  }, [hiveIdx, found, done, timer.elapsedSeconds, save]);
+
+  const handleResume = useCallback(() => {
+    if (pendingSavedState) {
+      setHiveIdx(pendingSavedState.hiveIdx);
+      setFound(pendingSavedState.found);
+      const outer = HIVE_SETS[pendingSavedState.hiveIdx].letters.filter(
+        l => l !== HIVE_SETS[pendingSavedState.hiveIdx].center,
+      );
+      setShuffledOuter([...outer].sort(() => Math.random() - 0.5));
+    }
+    setShowResumeModal(false);
+    timer.restoreAndResume(resumeElapsed);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    clear();
+    setShowResumeModal(false);
+    timer.start();
+  }, [clear, timer]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    timer.pause();
+    clear();
     setWon(w);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer, clear]);
 
   const showMsg = useCallback((msg: string, panagram = false) => {
     setMessage(msg);
@@ -148,6 +204,16 @@ export function WordHiveGame({ onComplete, onBack }: Props) {
       showsVerticalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"
     >
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🐝"
+        gameName="Word Hive"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `${pendingSavedState.found.length} words found` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       {/* Score + Rank */}
       <View style={s.scoreBar}>
         <View>
@@ -244,10 +310,9 @@ export function WordHiveGame({ onComplete, onBack }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
               setInput(''); setFound([]); setScore(0); setMessage('');
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Play Again</Text>
             </TouchableOpacity>

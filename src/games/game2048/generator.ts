@@ -58,11 +58,12 @@ export function move(state: GameState, dir: 'left' | 'right' | 'up' | 'down'): G
     return r;
   });
 
-  // Rotate back
+  // Rotate back (inverse transforms)
   let final = result;
   if (dir === 'right') final = result.map(r => [...r].reverse());
   if (dir === 'up') final = result[0].map((_, c) => result.map(r => r[c]));
-  if (dir === 'down') final = result[0].map((_, c) => result.map(r => r[c]).reverse());
+  // 'down' forward was 90° CW; inverse is 90° CCW = transpose then reverse row order
+  if (dir === 'down') final = result[0].map((_, c) => result.map(r => r[c])).reverse();
 
   // Check if anything changed
   const changed = final.some((r, ri) => r.some((v, ci) => v !== grid[ri][ci]));

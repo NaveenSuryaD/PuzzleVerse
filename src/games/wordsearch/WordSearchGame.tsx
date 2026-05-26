@@ -15,6 +15,9 @@ import { useTheme, type ThemeColors } from '../../theme/useTheme';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { fonts } from '../../theme/typography';
 import { playSound } from '../../audio/sounds';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 import {
   generateWordSearch,
   getCellsOnLine,
@@ -71,22 +74,91 @@ function buildFoundCellMap(words: PlacedWord[]): Map<string, number> {
   return map;
 }
 
+interface WordSearchGameSaveState {
+  puzzle: WordSearchPuzzle;
+  words: PlacedWord[];
+}
+
 interface WordSearchGameProps {
   onComplete?: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  paused?: boolean;
 }
 
-export const WordSearchGame: React.FC<WordSearchGameProps> = ({ onComplete, onBack }) => {
+export const WordSearchGame: React.FC<WordSearchGameProps> = ({ onComplete, onBack, paused = false }) => {
   const colors = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
   const palettes = useMemo(() => FOUND_PALETTES(colors), [colors]);
   const hapticsEnabled = useSettingsStore(st => st.hapticsEnabled);
+
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<WordSearchGameSaveState>('word-search');
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<WordSearchGameSaveState | null>(null);
 
   const [puzzle, setPuzzle] = useState<WordSearchPuzzle>(() => generateWordSearch());
   const [words, setWords] = useState<PlacedWord[]>(() => puzzle.words);
   const [selectedCells, setSelectedCells] = useState<CellCoord[]>([]);
   const [showComplete, setShowComplete] = useState(false);
   const [completedTime, setCompletedTime] = useState(0);
+
+  const initNewGame = useCallback(() => {
+    const newPuzzle = generateWordSearch();
+    setPuzzle(newPuzzle);
+    setWords(newPuzzle.words);
+    wordsRef.current = newPuzzle.words;
+    gridRef.current = newPuzzle.grid;
+    setSelectedCells([]);
+  }, []);
+
+  useEffect(() => {
+    const checkSaved = async () => {
+      const result = await load();
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        initNewGame();
+        timer.start();
+      }
+    };
+    checkSaved();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const allFound = words.every(w => w.found);
+  useEffect(() => {
+    if (allFound) { clear(); return; }
+    save({ puzzle, words }, timer.elapsedSeconds);
+  }, [words]);
+
+  const handleResume = useCallback(() => {
+    setShowResumeModal(false);
+    if (pendingSavedState) {
+      setPuzzle(pendingSavedState.puzzle);
+      setWords(pendingSavedState.words);
+      wordsRef.current = pendingSavedState.words;
+      gridRef.current = pendingSavedState.puzzle.grid;
+    }
+    timer.restoreAndResume(resumeElapsed);
+    setPendingSavedState(null);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    setShowResumeModal(false);
+    clear();
+    initNewGame();
+    timer.start();
+    setPendingSavedState(null);
+  }, [clear, timer, initNewGame]);
 
   // Mutable state the stable PanResponder closure reads via refs
   const startCellRef = useRef<CellCoord | null>(null);
@@ -96,9 +168,6 @@ export const WordSearchGame: React.FC<WordSearchGameProps> = ({ onComplete, onBa
   const selSnapshotRef = useRef<CellCoord[]>([]);
   const hapticsRef = useRef(hapticsEnabled);
   const onWordFoundRef = useRef<(w: string) => void>(() => {});
-
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Keep refs in sync
   useEffect(() => { wordsRef.current = words; }, [words]);
@@ -110,13 +179,6 @@ export const WordSearchGame: React.FC<WordSearchGameProps> = ({ onComplete, onBa
     gridRef.current = puzzle.grid;
     setWords(puzzle.words);
     setSelectedCells([]);
-    elapsedRef.current = 0;
-  }, [puzzle]);
-
-  useEffect(() => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [puzzle]);
 
   const foundCellMap = useMemo(() => buildFoundCellMap(words), [words]);
@@ -137,8 +199,8 @@ export const WordSearchGame: React.FC<WordSearchGameProps> = ({ onComplete, onBa
       wordsRef.current = next;
 
       if (next.every(pw => pw.found)) {
-        if (timerRef.current) clearInterval(timerRef.current);
-        const t = elapsedRef.current;
+        timer.pause();
+        const t = timer.elapsedSeconds;
         setCompletedTime(t);
         setTimeout(() => {
           setShowComplete(true);
@@ -149,14 +211,12 @@ export const WordSearchGame: React.FC<WordSearchGameProps> = ({ onComplete, onBa
       }
       return next;
     });
-  }, [onComplete]);
+  }, [onComplete, timer]);
 
   // Always point to the latest callback
   onWordFoundRef.current = handleWordFound;
 
   // ── Stable PanResponder (created once, never recreated) ──────────────────
-  // Children inside the grid have pointerEvents="none", so locationX/locationY
-  // from every event are relative to the grid container View — no measurement needed.
   const panHandlers = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -203,11 +263,26 @@ export const WordSearchGame: React.FC<WordSearchGameProps> = ({ onComplete, onBa
 
   const startNewGame = useCallback(() => {
     setShowComplete(false);
-    setPuzzle(generateWordSearch());
-  }, []);
+    const newPuzzle = generateWordSearch();
+    setPuzzle(newPuzzle);
+    setWords(newPuzzle.words);
+    wordsRef.current = newPuzzle.words;
+    gridRef.current = newPuzzle.grid;
+    setSelectedCells([]);
+    timer.start();
+  }, [timer]);
 
   return (
     <View style={s.root}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🔍"
+        gameName="Word Search"
+        elapsedSeconds={resumeElapsed}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       {/* Stats strip */}
       <View style={s.statsStrip}>
         <View style={s.statItem}>
@@ -227,13 +302,9 @@ export const WordSearchGame: React.FC<WordSearchGameProps> = ({ onComplete, onBa
       </View>
 
       {/* Grid ─────────────────────────────────────────────────────────────── */}
-      {/* The outer View centers the grid. The inner View has PanResponder.   */}
-      {/* ALL children inside it have pointerEvents="none" so that             */}
-      {/* locationX/locationY are always relative to this container.          */}
       <View style={s.gridOuter}>
         <View style={s.gridWrapper} {...panHandlers}>
           {puzzle.grid.map((row, r) => (
-            // pointerEvents="none" propagates to all descendants
             <View key={r} style={s.row} pointerEvents="none">
               {row.map((letter, c) => {
                 const key = `${r}-${c}`;
@@ -417,6 +488,8 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     fontFamily: fonts.bold,
     fontSize: CELL_SIZE > 35 ? 14 : 13,
     color: colors.ink,
+    width: CELL_SIZE,
+    textAlign: 'center',
   },
   cellTextSelected: {
     color: colors.bg,

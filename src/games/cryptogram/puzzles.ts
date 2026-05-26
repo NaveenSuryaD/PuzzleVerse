@@ -27,7 +27,7 @@ export const CRYPTOGRAM_PUZZLES: CryptogramPuzzle[] = [
 ];
 
 // Simple static cipher for gameplay
-export const STATIC_PUZZLES: Array<{ encoded: string; decoded: string; author: string; letterMap: Record<string,string> }> = [
+export const STATIC_PUZZLES: { encoded: string; decoded: string; author: string; letterMap: Record<string,string> }[] = [
   {
     decoded: 'KNOWLEDGE IS POWER',
     encoded: 'NXYATMPOM QA ZYAMO',

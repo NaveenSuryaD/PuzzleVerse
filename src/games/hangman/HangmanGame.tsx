@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   Modal, Dimensions,
@@ -9,6 +9,9 @@ import { getRandomWord } from './wordbank';
 import type { GameStatus, LetterStatus } from './types';
 import * as Haptics from 'expo-haptics';
 import { playSound } from '../../audio/sounds';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 const MAX_WRONG = 6;
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -21,9 +24,16 @@ const ROWS = [
   ['Z', 'X', 'C', 'V', 'B', 'N', 'M'],
 ];
 
+interface HangmanSaveState {
+  word: string;
+  guessed: string[];
+  gameStatus: GameStatus;
+}
+
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  paused?: boolean;
 }
 
 function HangmanDrawing({ wrongCount, colors }: { wrongCount: number; colors: ThemeColors }) {
@@ -82,28 +92,75 @@ const draw = StyleSheet.create({
   bar: { position: 'absolute', borderRadius: 3 },
 });
 
-export function HangmanGame({ onComplete, onBack }: Props) {
+export function HangmanGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
   const isDark = colors.bg === '#16110A';
 
-  const [word, setWord] = useState(getRandomWord);
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<HangmanSaveState>('hangman');
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<HangmanSaveState | null>(null);
+
+  const [word, setWord] = useState<string>(() => getRandomWord());
   const [guessed, setGuessed] = useState<Set<string>>(new Set());
   const [gameStatus, setGameStatus] = useState<GameStatus>('playing');
 
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
-
-  const startTimer = useCallback(() => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+  const initNewGame = useCallback(() => {
+    const w = getRandomWord();
+    setWord(w);
+    setGuessed(new Set());
+    setGameStatus('playing');
   }, []);
 
   useEffect(() => {
-    startTimer();
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [startTimer]);
+    const checkSaved = async () => {
+      const result = await load();
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        initNewGame();
+        timer.start();
+      }
+    };
+    checkSaved();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (gameStatus !== 'playing') { clear(); return; }
+    save({ word, guessed: [...guessed], gameStatus }, timer.elapsedSeconds);
+  }, [word, guessed]);
+
+  const handleResume = useCallback(() => {
+    setShowResumeModal(false);
+    if (pendingSavedState) {
+      setWord(pendingSavedState.word);
+      setGuessed(new Set(pendingSavedState.guessed));
+      setGameStatus(pendingSavedState.gameStatus);
+    }
+    timer.restoreAndResume(resumeElapsed);
+    setPendingSavedState(null);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    setShowResumeModal(false);
+    clear();
+    initNewGame();
+    timer.start();
+    setPendingSavedState(null);
+  }, [clear, timer, initNewGame]);
 
   const wrongCount = useMemo(
     () => [...guessed].filter(l => !word.includes(l)).length,
@@ -116,13 +173,11 @@ export function HangmanGame({ onComplete, onBack }: Props) {
   );
 
   const finish = useCallback((won: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    if (gameStatus !== 'playing') return;
     setGameStatus(won ? 'won' : 'lost');
     playSound(won ? 'win' : 'lose');
-    onComplete(won, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(won, timer.elapsedSeconds);
+  }, [gameStatus, onComplete, timer]);
 
   useEffect(() => {
     if (gameStatus !== 'playing') return;
@@ -155,13 +210,9 @@ export function HangmanGame({ onComplete, onBack }: Props) {
   );
 
   const restart = useCallback(() => {
-    setWord(getRandomWord());
-    setGuessed(new Set());
-    setGameStatus('playing');
-    elapsedRef.current = 0;
-    completedRef.current = false;
-    startTimer();
-  }, [startTimer]);
+    initNewGame();
+    timer.start();
+  }, [initNewGame, timer]);
 
   const blankW = word.length > 7 ? 24 : 30;
 
@@ -172,6 +223,15 @@ export function HangmanGame({ onComplete, onBack }: Props) {
       showsVerticalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"
     >
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🎭"
+        gameName="Hangman"
+        elapsedSeconds={resumeElapsed}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       {/* Drawing */}
       <View style={s.drawingWrap}>
         <HangmanDrawing wrongCount={wrongCount} colors={colors} />
@@ -204,6 +264,18 @@ export function HangmanGame({ onComplete, onBack }: Props) {
 
       {/* Wrong letters strip */}
       <Text style={s.wrongLetters}>{wrongLetters || ' '}</Text>
+
+      {/* Letter frequency hint */}
+      {gameStatus === 'playing' && (
+        <View style={s.freqRow}>
+          <Text style={s.freqLabel}>Try: </Text>
+          {frequencyHints.map(l => (
+            <View key={l} style={[s.freqKey, { backgroundColor: colors.surface }]}>
+              <Text style={[s.freqKeyText, { color: colors.inkSoft }]}>{l}</Text>
+            </View>
+          ))}
+        </View>
+      )}
 
       {/* QWERTY keyboard */}
       <View style={s.keyboard}>
@@ -311,13 +383,22 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     paddingHorizontal: 16, maxWidth: SCREEN_W,
   },
   blank: { alignItems: 'center', paddingBottom: 2 },
-  blankLetter: { fontFamily: fonts.black, fontSize: 22 },
+  blankLetter: { fontFamily: fonts.black, fontSize: 22, includeFontPadding: false, textAlign: 'center', width: '100%' },
   blankLine: { height: 2, width: '100%', borderRadius: 1, marginTop: 4 },
 
   wrongLetters: {
     fontFamily: fonts.bold, fontSize: 13, color: colors.danger,
     letterSpacing: 2, marginTop: 10, minHeight: 20,
   },
+  freqRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6, marginBottom: 4,
+  },
+  freqLabel: { fontFamily: fonts.semiBold, fontSize: 12, color: colors.inkMuted },
+  freqKey: {
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8,
+    borderWidth: 1, borderColor: colors.divider,
+  },
+  freqKeyText: { fontFamily: fonts.bold, fontSize: 13 },
 
   keyboard: {
     marginTop: 14, alignItems: 'center', gap: 5, paddingHorizontal: 16,
@@ -329,7 +410,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     shadowColor: colors.ink, shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.08, shadowRadius: 2, elevation: 2,
   },
-  keyText: { fontFamily: fonts.extraBold, fontSize: 14, color: colors.ink },
+  keyText: { fontFamily: fonts.extraBold, fontSize: 14, color: colors.ink, width: KEY_W, textAlign: 'center' },
 
   overlay: {
     flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',

@@ -1,12 +1,16 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  paused?: boolean;
 }
 
 const CATEGORIES = [
@@ -33,35 +37,90 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-export function WordBingoGame({ onComplete, onBack }: Props) {
+interface SaveState {
+  card: string[];
+  order: number[];
+  defIdx: number;
+  marked: string[];
+}
+
+export function WordBingoGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SaveState>('word-bingo');
 
   const cat = CATEGORIES[0];
-  const [card] = useState(() => shuffle([...cat.words]).slice(0, 25));
-  const [order] = useState(() => shuffle([...Array.from({ length: cat.words.length }, (_, i) => i)]));
-  const [defIdx, setDefIdx] = useState(0);
-  const [marked, setMarked] = useState<Set<string>>(new Set());
+  const [card, setCard] = useState<string[]>(() => shuffle([...cat.words]).slice(0, 25));
+  const [order, setOrder] = useState<number[]>(() => shuffle([...Array.from({ length: cat.words.length }, (_, i) => i)]));
+  const [defIdx, setDefIdx] = useState<number>(0);
+  const [marked, setMarked] = useState<Set<string>>(() => new Set());
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
 
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SaveState | null>(null);
+
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Mount effect: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    (async () => {
+      const result = await load();
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        timer.start();
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Save effect
+  useEffect(() => {
+    if (!done && !showResumeModal) {
+      save({ card, order, defIdx, marked: [...marked] }, timer.elapsedSeconds);
+    }
+  }, [defIdx, marked, timer.elapsedSeconds, done, showResumeModal, save, card, order]);
+
+  const handleResume = useCallback(() => {
+    if (pendingSavedState) {
+      setCard(pendingSavedState.card);
+      setOrder(pendingSavedState.order);
+      setDefIdx(pendingSavedState.defIdx);
+      setMarked(new Set(pendingSavedState.marked));
+    }
+    setShowResumeModal(false);
+    timer.restoreAndResume(resumeElapsed);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    clear();
+    setCard(shuffle([...cat.words]).slice(0, 25));
+    setOrder(shuffle([...Array.from({ length: cat.words.length }, (_, i) => i)]));
+    setDefIdx(0);
+    setMarked(new Set());
+    setShowResumeModal(false);
+    timer.start();
+  }, [clear, timer, cat.words]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    timer.pause();
+    clear();
     setWon(w);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer, clear]);
 
   const currentDef = cat.definitions[order[defIdx % cat.definitions.length]];
   const currentWord = cat.words[order[defIdx % cat.words.length]];
@@ -90,6 +149,16 @@ export function WordBingoGame({ onComplete, onBack }: Props) {
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🎲"
+        gameName="Word Bingo"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `${pendingSavedState.marked.length} squares marked` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <Text style={s.title}>Word Bingo: {cat.name}</Text>
 
       {/* Definition card */}
@@ -133,10 +202,11 @@ export function WordBingoGame({ onComplete, onBack }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
+              setCard(shuffle([...cat.words]).slice(0, 25));
+              setOrder(shuffle([...Array.from({ length: cat.words.length }, (_, i) => i)]));
               setMarked(new Set()); setDefIdx(0);
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Play Again</Text>
             </TouchableOpacity>

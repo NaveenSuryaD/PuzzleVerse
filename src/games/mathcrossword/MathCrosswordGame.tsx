@@ -1,12 +1,20 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  paused?: boolean;
+}
+
+interface SaveState {
+  answers: Record<number, number | null>;
 }
 
 // Curated self-contained math crossword puzzles
@@ -34,11 +42,18 @@ const PUZZLES = [
   },
 ];
 
-export function MathCrosswordGame({ onComplete, onBack }: Props) {
+export function MathCrosswordGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SaveState>('math-crossword');
 
   const puzzle = PUZZLES[0];
   const [answers, setAnswers] = useState<Record<number, number | null>>({});
@@ -46,21 +61,54 @@ export function MathCrosswordGame({ onComplete, onBack }: Props) {
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
 
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SaveState | null>(null);
+
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Mount: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    load().then(result => {
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        timer.start();
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Save on meaningful changes
+  useEffect(() => {
+    if (!done && timer.isRunning) {
+      save({ answers }, timer.elapsedSeconds);
+    }
+  }, [answers]);
+
+  const handleResume = useCallback(() => {
+    if (!pendingSavedState) return;
+    setAnswers(pendingSavedState.answers);
+    setShowResumeModal(false);
+    timer.restoreAndResume(resumeElapsed);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    clear();
+    setAnswers({});
+    setShowResumeModal(false);
+    timer.start();
+  }, [clear, timer]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    clear();
+    timer.pause();
     setWon(w);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, clear, timer]);
 
   const checkSolved = useCallback((ans: Record<number, number | null>) => {
     const allCorrect = puzzle.questions.every((q, i) => ans[i] === q.answer);
@@ -78,6 +126,16 @@ export function MathCrosswordGame({ onComplete, onBack }: Props) {
 
   return (
     <ScrollView contentContainerStyle={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="➕"
+        gameName="Math Crossword"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `${Object.keys(pendingSavedState.answers).length} / ${puzzle.questions.length} answered` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <Text style={s.title}>Math Crossword</Text>
       <Text style={s.subtitle}>Fill in the missing numbers</Text>
 
@@ -126,10 +184,9 @@ export function MathCrosswordGame({ onComplete, onBack }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
               setAnswers({}); setSelected(null);
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Play Again</Text>
             </TouchableOpacity>

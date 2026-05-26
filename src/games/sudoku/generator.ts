@@ -67,7 +67,7 @@ function countSolutions(board: number[][], limit = 2): number {
           for (let num = 1; num <= 9; num++) {
             if (isValid(board, row, col, num)) {
               board[row][col] = num;
-              if (bt()) { /* continue */ }
+              if (bt()) return true;
               board[row][col] = 0;
             }
           }

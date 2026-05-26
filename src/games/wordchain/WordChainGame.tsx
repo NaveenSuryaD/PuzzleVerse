@@ -3,10 +3,18 @@ import { View, Text, StyleSheet, TouchableOpacity, TextInput, Modal, ScrollView 
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  paused?: boolean;
+}
+
+interface SaveState {
+  words: string[];
 }
 
 const VALID_WORDS = new Set([
@@ -24,49 +32,103 @@ const VALID_WORDS = new Set([
 
 const STARTER_WORDS = ['apple','train','night','eagle','polar','tower','steam'];
 
-export function WordChainGame({ onComplete, onBack }: Props) {
+function initWords() {
+  const starter = STARTER_WORDS[Math.floor(Math.random() * STARTER_WORDS.length)];
+  return [starter];
+}
+
+export function WordChainGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SaveState>('word-chain');
 
   const [timeLeft, setTimeLeft] = useState(60);
-  const [words, setWords] = useState<string[]>(() => {
-    const starter = STARTER_WORDS[Math.floor(Math.random() * STARTER_WORDS.length)];
-    return [starter];
-  });
+  const [words, setWords] = useState<string[]>(() => initWords());
+  const wordsRef = useRef<string[]>([]);
   const [input, setInput] = useState('');
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SaveState | null>(null);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 
-  useEffect(() => {
-    const countdown = setInterval(() => {
+  const finish = useCallback((w: boolean) => {
+    clear();
+    timer.pause();
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    setDone(true);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, clear, timer]);
+
+  const startCountdown = useCallback(() => {
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    countdownRef.current = setInterval(() => {
       setTimeLeft(t => {
         if (t <= 1) {
-          clearInterval(countdown);
-          finish(words.length > 1);
+          clearInterval(countdownRef.current!);
+          finish(wordsRef.current.length > 1);
           return 0;
         }
         return t - 1;
       });
     }, 1000);
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+  }, [finish]);
+
+  // Mount: load saved state
+  useEffect(() => {
+    load().then(result => {
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        timer.start();
+        startCountdown();
+      }
+    });
     return () => {
-      clearInterval(countdown);
-      if (timerRef.current) clearInterval(timerRef.current);
+      if (countdownRef.current) clearInterval(countdownRef.current);
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
-    setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+  // Save on meaningful changes
+  useEffect(() => {
+    if (!done && timer.isRunning) {
+      save({ words }, timer.elapsedSeconds);
+    }
+  }, [words]);
 
+  const handleResume = useCallback(() => {
+    if (!pendingSavedState) return;
+    setWords(pendingSavedState.words);
+    setShowResumeModal(false);
+    timer.restoreAndResume(resumeElapsed);
+    startCountdown();
+  }, [pendingSavedState, resumeElapsed, timer, startCountdown]);
+
+  const handleStartFresh = useCallback(() => {
+    clear();
+    setWords(initWords());
+    setTimeLeft(60);
+    setShowResumeModal(false);
+    timer.start();
+    startCountdown();
+  }, [clear, timer, startCountdown]);
+
+  wordsRef.current = words;
   const lastWord = words[words.length - 1];
   const requiredStart = lastWord[lastWord.length - 1].toUpperCase();
 
@@ -86,6 +148,16 @@ export function WordChainGame({ onComplete, onBack }: Props) {
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🔗"
+        gameName="Word Chain"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `${pendingSavedState.words.length - 1} words chained` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <View style={s.timerRow}>
         <Text style={s.timerText}>{timeLeft}s</Text>
         <Text style={s.scoreText}>Words: {words.length - 1}</Text>
@@ -135,14 +207,11 @@ export function WordChainGame({ onComplete, onBack }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
-              const starter = STARTER_WORDS[Math.floor(Math.random() * STARTER_WORDS.length)];
-              setWords([starter]); setInput(''); setError('');
-              setTimeLeft(60); elapsedRef.current = 0;
-              const countdown = setInterval(() => {
-                setTimeLeft(t => { if (t <= 1) { clearInterval(countdown); finish(words.length > 1); return 0; } return t - 1; });
-              }, 1000);
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              setDone(false);
+              setWords(initWords()); setInput(''); setError('');
+              setTimeLeft(60);
+              timer.start();
+              startCountdown();
             }}>
               <Text style={s.modalBtnText}>Play Again</Text>
             </TouchableOpacity>

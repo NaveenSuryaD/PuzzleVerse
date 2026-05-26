@@ -1,12 +1,16 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  paused?: boolean;
 }
 
 type Cell = 0 | 1 | 2; // 0=empty, 1=player(black), 2=AI(white)
@@ -69,33 +73,83 @@ function aiMove(board: Cell[][]): [number,number] | null {
   return best;
 }
 
-export function ReversiGame({ onComplete, onBack }: Props) {
-  const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
+interface SaveState {
+  board: Cell[][];
+  turn: 1 | 2;
+}
 
-  const [board, setBoard] = useState<Cell[][]>(initBoard);
+export function ReversiGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
+  const colors = useTheme();
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SaveState>('reversi');
+
+  const [board, setBoard] = useState<Cell[][]>(() => initBoard());
   const [turn, setTurn] = useState<1|2>(1);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
   const [aiThinking, setAiThinking] = useState(false);
 
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SaveState | null>(null);
+
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Mount effect: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    (async () => {
+      const result = await load();
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        timer.start();
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Save effect
+  useEffect(() => {
+    if (!done && !showResumeModal) {
+      save({ board, turn }, timer.elapsedSeconds);
+    }
+  }, [board, turn, timer.elapsedSeconds, done, showResumeModal, save]);
+
+  const handleResume = useCallback(() => {
+    if (pendingSavedState) {
+      setBoard(pendingSavedState.board);
+      setTurn(pendingSavedState.turn);
+    }
+    setShowResumeModal(false);
+    timer.restoreAndResume(resumeElapsed);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    clear();
+    setBoard(initBoard());
+    setTurn(1);
+    setAiThinking(false);
+    setShowResumeModal(false);
+    timer.start();
+  }, [clear, timer]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    timer.pause();
+    clear();
     setWon(w);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer, clear]);
 
   const checkEnd = useCallback((b: Cell[][], nextTurn: 1|2) => {
     const playerMoves = getValidMoves(b, 1);
@@ -148,6 +202,16 @@ export function ReversiGame({ onComplete, onBack }: Props) {
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="⚫"
+        gameName="Reversi"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `Black: ${pendingSavedState.board.flat().filter(c => c===1).length} · White: ${pendingSavedState.board.flat().filter(c => c===2).length}` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <Text style={s.title}>Reversi</Text>
       <Text style={s.subtitle}>You are Black · Outflank White</Text>
 
@@ -200,10 +264,9 @@ export function ReversiGame({ onComplete, onBack }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
               setBoard(initBoard()); setTurn(1); setAiThinking(false);
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Play Again</Text>
             </TouchableOpacity>

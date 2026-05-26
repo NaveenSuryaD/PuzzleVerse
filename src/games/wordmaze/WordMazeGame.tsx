@@ -1,12 +1,16 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  paused?: boolean;
 }
 
 // Word Maze: find a path through letter grid that spells a word
@@ -40,13 +44,30 @@ function isAdjacent(r1: number, c1: number, r2: number, c2: number) {
 
 const CELL_SIZE = 64;
 
-export function WordMazeGame({ onComplete, onBack }: Props) {
-  const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
+interface SavedState {
+  puzIdx: number;
+  path: [number, number][];
+  found: string[];
+}
 
-  const [puzIdx, setPuzIdx] = useState(0);
+export function WordMazeGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
+  const colors = useTheme();
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SavedState>('word-maze');
+
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SavedState | null>(null);
+
+  const [puzIdx, setPuzIdx] = useState<number>(0);
   const puz = PUZZLES[puzIdx];
 
   const [path, setPath] = useState<[number,number][]>([]);
@@ -56,28 +77,63 @@ export function WordMazeGame({ onComplete, onBack }: Props) {
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Mount effect: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    load().then(result => {
+      if (result.found && result.gameState) {
+        setResumeElapsed(result.elapsedSeconds);
+        setPendingSavedState(result.gameState);
+        setShowResumeModal(true);
+        timer.pause();
+      } else {
+        timer.start();
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Save effect
+  useEffect(() => {
+    if (!done) {
+      save({ puzIdx, path, found }, timer.elapsedSeconds);
+    }
+  }, [puzIdx, path, found, done, save, timer.elapsedSeconds]);
+
+  const handleResume = useCallback(() => {
+    setShowResumeModal(false);
+    if (pendingSavedState) {
+      setPuzIdx(pendingSavedState.puzIdx);
+      setPath(pendingSavedState.path);
+      setFound(pendingSavedState.found);
+    }
+    timer.restoreAndResume(resumeElapsed);
+    setPendingSavedState(null);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    setShowResumeModal(false);
+    setPendingSavedState(null);
+    clear();
+    setPuzIdx(0);
+    setPath([]);
+    setFound([]);
+    timer.start();
+  }, [clear, timer]);
 
   useEffect(() => {
     setPath([]); setFound([]);
   }, [puzIdx]);
 
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    clear();
     setWon(w);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer.elapsedSeconds, clear]);
 
   const currentWord = path.map(([r,c]) => puz.grid[r][c]).join('');
 
   const handleCellPress = useCallback((r: number, c: number) => {
-    const key = `${r},${c}`;
     const inPath = path.some(([pr,pc]) => pr===r && pc===c);
 
     if (inPath) {
@@ -117,6 +173,16 @@ export function WordMazeGame({ onComplete, onBack }: Props) {
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🌀"
+        gameName="Word Maze"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `${pendingSavedState.found.length} / 3 words found` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <Text style={s.title}>Word Maze</Text>
       <Text style={s.subtitle}>Trace adjacent letters to form words</Text>
       <Text style={s.progress}>Found: {found.length} / 3 words</Text>
@@ -179,11 +245,10 @@ export function WordMazeGame({ onComplete, onBack }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
               const next = (puzIdx + 1) % PUZZLES.length;
               setPuzIdx(next);
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Next Puzzle</Text>
             </TouchableOpacity>
@@ -206,7 +271,7 @@ const makeStyles = (colors: ReturnType<typeof useTheme>) => StyleSheet.create({
   grid: { borderWidth: 2, borderColor: colors.ink, marginBottom: 16 },
   cell: { width: CELL_SIZE, height: CELL_SIZE, borderWidth: 1, borderColor: colors.divider, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center' },
   cellOnPath: { backgroundColor: colors.word.bg, borderColor: colors.word.ink, borderWidth: 2 },
-  letter: { fontFamily: fonts.black, fontSize: 22, color: colors.ink },
+  letter: { fontFamily: fonts.black, fontSize: 22, color: colors.ink, width: CELL_SIZE, textAlign: 'center' },
   letterOnPath: { color: colors.word.ink },
   pathNum: { position: 'absolute', top: 2, right: 4, fontFamily: fonts.semiBold, fontSize: 10, color: colors.word.ink },
   foundList: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center', marginBottom: 12 },

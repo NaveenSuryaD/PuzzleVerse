@@ -76,7 +76,7 @@ export default function DailyScreen() {
   const router = useRouter();
   const colors = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
-  const { games: progressGames } = useProgressStore();
+  const { games: progressGames, playedDates } = useProgressStore();
   const countdown = useCountdown();
 
   const todayDate = getDateStr(0);
@@ -115,7 +115,9 @@ export default function DailyScreen() {
     const d = new Date(dateStr + 'T00:00:00');
     const isToday = offset === 0;
     const isFuture = offset > 0;
-    const isDone = dailyGames.some(g => (progressGames[g.id]?.completedDailyDates ?? []).includes(dateStr));
+    // Show checkmark if user played ANY game that day (not just daily games)
+    const isDone = (playedDates ?? []).includes(dateStr)
+      || dailyGames.some(g => (progressGames[g.id]?.completedDailyDates ?? []).includes(dateStr));
     return { label, day: d.getDate(), isToday, isFuture, isDone };
   });
 

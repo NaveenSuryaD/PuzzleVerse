@@ -25,7 +25,7 @@ export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
       theme: 'light',
-      soundEnabled: false,
+      soundEnabled: true,
       hapticsEnabled: true,
       showTimer: true,
       reducedMotion: false,

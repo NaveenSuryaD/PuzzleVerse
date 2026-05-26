@@ -3,7 +3,7 @@ import type { CrosswordPuzzle } from './types';
 function makePuzzle(
   id: number,
   flat: string,
-  clues: Array<{ number: number; direction: 'across' | 'down'; clue: string }>,
+  clues: { number: number; direction: 'across' | 'down'; clue: string }[],
   title?: string,
 ): CrosswordPuzzle {
   const sol: string[][] = [];

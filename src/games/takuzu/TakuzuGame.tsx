@@ -1,22 +1,37 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { TAKUZU_PUZZLES } from './puzzles';
 import * as Haptics from 'expo-haptics';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  paused?: boolean;
+}
+
+interface SaveState {
+  grid: (0 | 1 | null)[][];
 }
 
 const CELL = 50;
 
-export function TakuzuGame({ onComplete, onBack }: Props) {
+export function TakuzuGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SaveState>('takuzu');
 
   const puzzle = TAKUZU_PUZZLES[0];
   const N = puzzle.given.length;
@@ -24,44 +39,128 @@ export function TakuzuGame({ onComplete, onBack }: Props) {
   const [grid, setGrid] = useState<(0 | 1 | null)[][]>(() =>
     puzzle.given.map(row => [...row])
   );
+  const [conflicts, setConflicts] = useState<Set<string>>(new Set());
   const [done, setDone] = useState(false);
+
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SaveState | null>(null);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Mount: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    load().then(result => {
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        timer.start();
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Save on meaningful changes
+  useEffect(() => {
+    if (!done && timer.isRunning) {
+      save({ grid }, timer.elapsedSeconds);
+    }
+  }, [grid]);
+
+  const handleResume = useCallback(() => {
+    if (!pendingSavedState) return;
+    setGrid(pendingSavedState.grid);
+    setShowResumeModal(false);
+    timer.restoreAndResume(resumeElapsed);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    clear();
+    setGrid(puzzle.given.map(row => [...row]));
+    setConflicts(new Set());
+    setShowResumeModal(false);
+    timer.start();
+  }, [clear, puzzle, timer]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    clear();
+    timer.pause();
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, clear, timer]);
+
+  const computeTakuzuConflicts = useCallback((g: (0 | 1 | null)[][]): Set<string> => {
+    const bad = new Set<string>();
+    // Three consecutive same in rows
+    for (let r = 0; r < N; r++) {
+      for (let c = 0; c <= N - 3; c++) {
+        const a = g[r][c], b = g[r][c+1], cc = g[r][c+2];
+        if (a !== null && a === b && b === cc) {
+          bad.add(`${r},${c}`); bad.add(`${r},${c+1}`); bad.add(`${r},${c+2}`);
+        }
+      }
+    }
+    // Three consecutive same in cols
+    for (let c = 0; c < N; c++) {
+      for (let r = 0; r <= N - 3; r++) {
+        const a = g[r][c], b = g[r+1][c], cc = g[r+2][c];
+        if (a !== null && a === b && b === cc) {
+          bad.add(`${r},${c}`); bad.add(`${r+1},${c}`); bad.add(`${r+2},${c}`);
+        }
+      }
+    }
+    // Unequal 0/1 count in complete rows
+    for (let r = 0; r < N; r++) {
+      const row = g[r];
+      if (row.some(v => v === null)) continue;
+      const zeros = row.filter(v => v === 0).length;
+      if (zeros !== N / 2) row.forEach((_, c) => bad.add(`${r},${c}`));
+    }
+    // Unequal 0/1 count in complete cols
+    for (let c = 0; c < N; c++) {
+      const col = g.map(row => row[c]);
+      if (col.some(v => v === null)) continue;
+      const zeros = col.filter(v => v === 0).length;
+      if (zeros !== N / 2) col.forEach((_, r) => bad.add(`${r},${c}`));
+    }
+    return bad;
+  }, [N]);
 
   const checkSolved = useCallback((g: (0 | 1 | null)[][]) => {
     if (g.some(row => row.some(v => v === null))) return;
-    const correct = (g as (0|1)[][]).every((row, ri) =>
-      row.every((v, ci) => v === puzzle.solution[ri][ci])
-    );
-    if (correct) finish(true);
-  }, [puzzle, finish]);
+    const bad = computeTakuzuConflicts(g);
+    if (bad.size > 0) return;
+    // Check no duplicate rows or cols
+    const rowStrs = g.map(row => row.join(''));
+    const colStrs = Array.from({ length: N }, (_, c) => g.map(r => r[c]).join(''));
+    if (new Set(rowStrs).size === N && new Set(colStrs).size === N) finish(true);
+  }, [computeTakuzuConflicts, finish, N]);
 
   const handleTap = useCallback((r: number, c: number) => {
-    if (puzzle.given[r][c] !== null) return; // given cell
+    if (puzzle.given[r][c] !== null) return;
     setGrid(prev => {
       const next = prev.map(row => [...row] as (0 | 1 | null)[]);
       const curr = next[r][c];
       next[r][c] = curr === null ? 0 : curr === 0 ? 1 : null;
+      setConflicts(computeTakuzuConflicts(next));
       checkSolved(next);
       return next;
     });
-  }, [puzzle, checkSolved]);
+  }, [puzzle, checkSolved, computeTakuzuConflicts]);
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="☯️"
+        gameName="Takuzu"
+        elapsedSeconds={resumeElapsed}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <Text style={s.title}>Takuzu / Binairo</Text>
       <Text style={s.subtitle}>Fill with 0s and 1s · No 3 consecutive · Equal count per row/col</Text>
 
@@ -70,6 +169,7 @@ export function TakuzuGame({ onComplete, onBack }: Props) {
           <View key={ri} style={{ flexDirection: 'row' }}>
             {row.map((val, ci) => {
               const isGiven = puzzle.given[ri][ci] !== null;
+              const hasConflict = !isGiven && conflicts.has(`${ri},${ci}`);
               return (
                 <TouchableOpacity
                   key={ci}
@@ -78,6 +178,7 @@ export function TakuzuGame({ onComplete, onBack }: Props) {
                     val === 0 && { backgroundColor: colors.classic.bg },
                     val === 1 && { backgroundColor: colors.word.bg },
                     isGiven && s.cellGiven,
+                    hasConflict && { backgroundColor: '#FFE0E0' },
                   ]}
                   onPress={() => handleTap(ri, ci)}
                   activeOpacity={0.8}
@@ -106,10 +207,10 @@ export function TakuzuGame({ onComplete, onBack }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
               setGrid(puzzle.given.map(row => [...row]));
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              setConflicts(new Set());
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Play Again</Text>
             </TouchableOpacity>

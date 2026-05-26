@@ -1,43 +1,106 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, Dimensions } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { solvedGrid, shuffle, isSolved, findEmpty } from './generator';
+import type { TileGrid } from './types';
+import { useProgressStore } from '../../store/useProgressStore';
 import * as Haptics from 'expo-haptics';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
+
+interface SlidingPuzzleSaveState {
+  grid: TileGrid;
+  moves: number;
+}
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  paused?: boolean;
 }
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const GRID_SIZE = Math.min(SCREEN_W - 48, 320);
 const CELL = GRID_SIZE / 4;
 
-export function SlidingPuzzleGame({ onComplete, onBack }: Props) {
+export function SlidingPuzzleGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
+  const { levels, setGameLevel } = useProgressStore();
 
-  const [grid, setGrid] = useState(() => shuffle(solvedGrid()));
-  const [moves, setMoves] = useState(0);
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SlidingPuzzleSaveState>('sliding-puzzle');
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SlidingPuzzleSaveState | null>(null);
+
+  const [level, setLevel] = useState(() => levels['sliding-puzzle'] ?? 1);
+  const shuffleMoves = Math.min(50 + (level - 1) * 75, 300);
+  const [grid, setGrid] = useState<TileGrid>(() => shuffle(solvedGrid(), shuffleMoves));
+  const [moves, setMoves] = useState<number>(0);
   const [done, setDone] = useState(false);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 
-  useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  const initNewGame = useCallback((lv: number) => {
+    const sm = Math.min(50 + (lv - 1) * 75, 300);
+    setGrid(shuffle(solvedGrid(), sm));
+    setMoves(0);
+    setDone(false);
   }, []);
 
+  useEffect(() => {
+    const checkSaved = async () => {
+      const result = await load();
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        initNewGame(levels['sliding-puzzle'] ?? 1);
+        timer.start();
+      }
+    };
+    checkSaved();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (done) { clear(); return; }
+    save({ grid, moves }, timer.elapsedSeconds);
+  }, [grid]);
+
+  const handleResume = useCallback(() => {
+    setShowResumeModal(false);
+    if (pendingSavedState) {
+      setGrid(pendingSavedState.grid);
+      setMoves(pendingSavedState.moves);
+    }
+    timer.restoreAndResume(resumeElapsed);
+    setPendingSavedState(null);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    setShowResumeModal(false);
+    clear();
+    initNewGame(levels['sliding-puzzle'] ?? 1);
+    timer.start();
+    setPendingSavedState(null);
+  }, [clear, timer, initNewGame, levels]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer]);
 
   const handleTap = useCallback((r: number, c: number) => {
     if (grid[r][c] === null) return;
@@ -57,7 +120,21 @@ export function SlidingPuzzleGame({ onComplete, onBack }: Props) {
 
   return (
     <View style={s.container}>
-      <Text style={s.title}>Sliding Puzzle</Text>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🧩"
+        gameName="Sliding Puzzle"
+        elapsedSeconds={resumeElapsed}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+        <Text style={s.title}>Sliding Puzzle</Text>
+        <View style={[s.levelBadge, { backgroundColor: colors.visual.bg }]}>
+          <Text style={[s.levelText, { color: colors.visual.ink }]}>Level {level}</Text>
+        </View>
+      </View>
       <Text style={s.subtitle}>Arrange 1–15 in order · Moves: {moves}</Text>
 
       <View style={[s.grid, { width: GRID_SIZE, height: GRID_SIZE }]}>
@@ -83,7 +160,7 @@ export function SlidingPuzzleGame({ onComplete, onBack }: Props) {
       </View>
 
       <TouchableOpacity style={s.resetBtn} onPress={() => {
-        setGrid(shuffle(solvedGrid()));
+        setGrid(shuffle(solvedGrid(), shuffleMoves));
         setMoves(0);
       }} activeOpacity={0.8}>
         <Text style={s.resetBtnText}>Shuffle</Text>
@@ -94,7 +171,7 @@ export function SlidingPuzzleGame({ onComplete, onBack }: Props) {
           <View style={s.modal}>
             <Text style={s.modalEmoji}>🎉</Text>
             <Text style={s.modalTitle}>Solved!</Text>
-            <Text style={s.modalSub}>Moves: {moves}</Text>
+            <Text style={s.modalSub}>Level {level} · {moves} moves</Text>
             {onBack && (
               <TouchableOpacity
                 style={[s.modalBtn, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: colors.rule, marginTop: 8 }]}
@@ -104,14 +181,13 @@ export function SlidingPuzzleGame({ onComplete, onBack }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false);
-              completedRef.current = false;
-              setGrid(shuffle(solvedGrid()));
-              setMoves(0);
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              const nextLevel = level + 1;
+              setLevel(nextLevel);
+              setGameLevel('sliding-puzzle', nextLevel);
+              initNewGame(nextLevel);
+              timer.start();
             }}>
-              <Text style={s.modalBtnText}>Play Again</Text>
+              <Text style={s.modalBtnText}>Next Level</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -122,7 +198,9 @@ export function SlidingPuzzleGame({ onComplete, onBack }: Props) {
 
 const makeStyles = (colors: ReturnType<typeof useTheme>) => StyleSheet.create({
   container: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
-  title: { fontFamily: fonts.black, fontSize: 22, color: colors.ink, marginBottom: 4 },
+  title: { fontFamily: fonts.black, fontSize: 22, color: colors.ink },
+  levelBadge: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999 },
+  levelText: { fontFamily: fonts.extraBold, fontSize: 13 },
   subtitle: { fontFamily: fonts.semiBold, fontSize: 13, color: colors.inkMuted, marginBottom: 24 },
   grid: { position: 'relative', backgroundColor: colors.surface2, borderRadius: 12, marginBottom: 24 },
   tile: { position: 'absolute', borderRadius: 10, alignItems: 'center', justifyContent: 'center' },

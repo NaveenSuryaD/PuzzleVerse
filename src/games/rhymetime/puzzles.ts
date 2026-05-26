@@ -1,6 +1,6 @@
 export interface RhymeRound {
   target: string;
-  options: Array<{ word: string; rhymes: boolean }>;
+  options: { word: string; rhymes: boolean }[];
 }
 
 export const RHYME_ROUNDS: RhymeRound[] = [

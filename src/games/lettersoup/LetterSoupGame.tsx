@@ -3,10 +3,14 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView } from 'rea
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  paused?: boolean;
 }
 
 const LETTER_SETS = [
@@ -16,14 +20,26 @@ const LETTER_SETS = [
 
 const VALID = new Set(['rant','snap','plan','star','raps','slap','earn','pals','tars','laps','rats','naps','span','near','lean','pans','rants','plans','earns','snaps','slaps','pants','leans','slant','plant','plants','planet','bored','board','bore','bark','bare','biker','bike','dorm','drab','idea','made','mike','mired','roam','robe','rode','road']);
 
-export function LetterSoupGame({ onComplete, onBack }: Props) {
+interface SaveState {
+  setIdx: number;
+  found: string[];
+}
+
+export function LetterSoupGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef<boolean>(false);
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SaveState>('letter-soup');
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const [setIdx] = useState(() => Math.floor(Math.random() * LETTER_SETS.length));
+  const [setIdx] = useState<number>(() => Math.floor(Math.random() * LETTER_SETS.length));
   const letterSet = LETTER_SETS[setIdx];
   const [selected, setSelected] = useState<number[]>([]);
   const [found, setFound] = useState<string[]>([]);
@@ -32,34 +48,87 @@ export function LetterSoupGame({ onComplete, onBack }: Props) {
   const [done, setDone] = useState(false);
   const [message, setMessage] = useState('');
 
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SaveState | null>(null);
+
   const s = useMemo(() => makeStyles(colors), [colors]);
 
-  useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+  const startCountdown = useCallback(() => {
+    if (countdownRef.current) clearInterval(countdownRef.current);
     countdownRef.current = setInterval(() => {
       setTimeLeft(t => {
         if (t <= 1) {
           if (countdownRef.current) clearInterval(countdownRef.current);
-          finish(score > 0);
           return 0;
         }
         return t - 1;
       });
     }, 1000);
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (countdownRef.current) clearInterval(countdownRef.current);
-    };
   }, []);
 
+  // Mount effect: load saved state
+  useEffect(() => {
+    (async () => {
+      const result = await load();
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        timer.start();
+        startCountdown();
+      }
+    })();
+    return () => {
+      if (countdownRef.current) clearInterval(countdownRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Finish when countdown hits zero
+  useEffect(() => {
+    if (timeLeft === 0 && !done && !showResumeModal) {
+      finish(score > 0);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeLeft]);
+
+  // Save effect
+  useEffect(() => {
+    if (!done && !showResumeModal) {
+      save({ setIdx, found }, timer.elapsedSeconds);
+    }
+  }, [setIdx, found, timer.elapsedSeconds, done, showResumeModal, save]);
+
+  const handleResume = useCallback(() => {
+    if (pendingSavedState) {
+      setFound(pendingSavedState.found);
+    }
+    setShowResumeModal(false);
+    timer.restoreAndResume(resumeElapsed);
+    startCountdown();
+  }, [pendingSavedState, resumeElapsed, timer, startCountdown]);
+
+  const handleStartFresh = useCallback(() => {
+    clear();
+    setFound([]);
+    setScore(0);
+    setTimeLeft(90);
+    setSelected([]);
+    setMessage('');
+    setShowResumeModal(false);
+    timer.start();
+    startCountdown();
+  }, [clear, timer, startCountdown]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
     if (countdownRef.current) clearInterval(countdownRef.current);
+    timer.pause();
+    clear();
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer, clear]);
 
   const currentWord = selected.map(i => letterSet.letters[i]).join('').toLowerCase();
 
@@ -88,6 +157,16 @@ export function LetterSoupGame({ onComplete, onBack }: Props) {
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🍜"
+        gameName="Letter Soup"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `${pendingSavedState.found.length} words found` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <View style={s.topRow}>
         <Text style={s.timer}>{timeLeft}s</Text>
         <Text style={s.scoreText}>Score: {score}</Text>
@@ -143,11 +222,10 @@ export function LetterSoupGame({ onComplete, onBack }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
               setSelected([]); setFound([]); setScore(0); setTimeLeft(90); setMessage('');
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-              countdownRef.current = setInterval(() => setTimeLeft(t => t > 1 ? t - 1 : 0), 1000);
+              timer.start();
+              startCountdown();
             }}>
               <Text style={s.modalBtnText}>Play Again</Text>
             </TouchableOpacity>

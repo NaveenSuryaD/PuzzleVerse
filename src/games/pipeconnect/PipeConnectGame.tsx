@@ -1,13 +1,23 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, Dimensions } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { PIPE_PUZZLES, getConnections } from './puzzles';
+import { useProgressStore } from '../../store/useProgressStore';
 import * as Haptics from 'expo-haptics';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
+
+interface PipeConnectSaveState {
+  puzzleIdx: number;
+  rotations: number[][];
+}
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  paused?: boolean;
 }
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -41,13 +51,27 @@ function PipeCellView({ type, rotation, isConnected, colors }: {
   );
 }
 
-export function PipeConnectGame({ onComplete, onBack }: Props) {
+export function PipeConnectGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
+  const { levels, setGameLevel } = useProgressStore();
 
-  const puzzle = PIPE_PUZZLES[0];
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<PipeConnectSaveState>('pipe-connect');
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<PipeConnectSaveState | null>(null);
+
+  const [level, setLevel] = useState(() => levels['pipe-connect'] ?? 1);
+  const [puzzleIdx, setPuzzleIdx] = useState(() => (levels['pipe-connect'] ?? 1) - 1);
+  const puzzle = PIPE_PUZZLES[puzzleIdx % PIPE_PUZZLES.length];
   const [rotations, setRotations] = useState<number[][]>(
     () => puzzle.map(row => row.map(() => Math.floor(Math.random() * 4)))
   );
@@ -55,18 +79,55 @@ export function PipeConnectGame({ onComplete, onBack }: Props) {
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 
-  useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  const initNewGame = useCallback((pIdx: number) => {
+    const p = PIPE_PUZZLES[pIdx % PIPE_PUZZLES.length];
+    setRotations(p.map(row => row.map(() => Math.floor(Math.random() * 4))));
+    setDone(false);
   }, []);
 
+  useEffect(() => {
+    const checkSaved = async () => {
+      const result = await load();
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        initNewGame((levels['pipe-connect'] ?? 1) - 1);
+        timer.start();
+      }
+    };
+    checkSaved();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (done) { clear(); return; }
+    save({ puzzleIdx, rotations }, timer.elapsedSeconds);
+  }, [rotations]);
+
+  const handleResume = useCallback(() => {
+    setShowResumeModal(false);
+    if (pendingSavedState) {
+      setPuzzleIdx(pendingSavedState.puzzleIdx);
+      setRotations(pendingSavedState.rotations);
+    }
+    timer.restoreAndResume(resumeElapsed);
+    setPendingSavedState(null);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    setShowResumeModal(false);
+    clear();
+    initNewGame((levels['pipe-connect'] ?? 1) - 1);
+    timer.start();
+    setPendingSavedState(null);
+  }, [clear, timer, initNewGame, levels]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer]);
 
   const checkSolved = useCallback((rots: number[][]) => {
     const solved = rots.every((row, ri) => row.every((rot, ci) => rot === puzzle[ri][ci].solvedRotation));
@@ -84,7 +145,21 @@ export function PipeConnectGame({ onComplete, onBack }: Props) {
 
   return (
     <View style={s.container}>
-      <Text style={s.title}>Pipe Connect</Text>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🔧"
+        gameName="Pipe Connect"
+        elapsedSeconds={resumeElapsed}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+        <Text style={s.title}>Pipe Connect</Text>
+        <View style={[s.levelBadge, { backgroundColor: colors.visual.bg }]}>
+          <Text style={[s.levelText, { color: colors.visual.ink }]}>Level {level}</Text>
+        </View>
+      </View>
       <Text style={s.subtitle}>Tap cells to rotate · Connect all pipes</Text>
 
       <View style={s.grid}>
@@ -114,6 +189,7 @@ export function PipeConnectGame({ onComplete, onBack }: Props) {
           <View style={s.modal}>
             <Text style={s.modalEmoji}>🔧</Text>
             <Text style={s.modalTitle}>Connected!</Text>
+            <Text style={[s.modalSub, { color: colors.inkMuted }]}>Level {level} complete!</Text>
             {onBack && (
               <TouchableOpacity
                 style={[s.modalBtn, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: colors.rule, marginTop: 8 }]}
@@ -123,13 +199,16 @@ export function PipeConnectGame({ onComplete, onBack }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
+              const nextIdx = puzzleIdx + 1;
+              const nextLevel = level + 1;
               setDone(false);
-              completedRef.current = false;
-              setRotations(puzzle.map(row => row.map(() => Math.floor(Math.random() * 4))));
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              setLevel(nextLevel);
+              setGameLevel('pipe-connect', nextLevel);
+              setPuzzleIdx(nextIdx);
+              initNewGame(nextIdx);
+              timer.start();
             }}>
-              <Text style={s.modalBtnText}>Play Again</Text>
+              <Text style={s.modalBtnText}>Next Level</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -140,8 +219,11 @@ export function PipeConnectGame({ onComplete, onBack }: Props) {
 
 const makeStyles = (colors: ReturnType<typeof useTheme>) => StyleSheet.create({
   container: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
-  title: { fontFamily: fonts.black, fontSize: 22, color: colors.ink, marginBottom: 4 },
+  title: { fontFamily: fonts.black, fontSize: 22, color: colors.ink },
+  levelBadge: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999 },
+  levelText: { fontFamily: fonts.extraBold, fontSize: 13 },
   subtitle: { fontFamily: fonts.semiBold, fontSize: 13, color: colors.inkMuted, marginBottom: 24 },
+  modalSub: { fontFamily: fonts.semiBold, fontSize: 14, marginBottom: 16 },
   grid: { borderWidth: 1, borderColor: colors.divider, backgroundColor: colors.surface },
   cell: { borderWidth: 0.5, borderColor: colors.rule, alignItems: 'center', justifyContent: 'center' },
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' },

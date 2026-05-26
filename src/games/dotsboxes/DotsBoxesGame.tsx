@@ -1,12 +1,16 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import * as Haptics from 'expo-haptics';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  paused?: boolean;
 }
 
 const N = 4; // 4x4 grid of dots = 4x4 boxes = NxN boxes, N+1 dots per side
@@ -68,7 +72,7 @@ function aiMove(state: GameState): { type: 'h' | 'v'; r: number; c: number } {
     }
   }
   // Random
-  const moves: Array<{ type: 'h' | 'v'; r: number; c: number }> = [];
+  const moves: { type: 'h' | 'v'; r: number; c: number }[] = [];
   for (let r = 0; r <= N; r++) {
     for (let c = 0; c < N; c++) {
       if (!state.hLines[r][c]) moves.push({ type: 'h', r, c });
@@ -82,29 +86,75 @@ function aiMove(state: GameState): { type: 'h' | 'v'; r: number; c: number } {
   return moves[Math.floor(Math.random() * moves.length)] ?? { type: 'h', r: 0, c: 0 };
 }
 
-export function DotsBoxesGame({ onComplete, onBack }: Props) {
-  const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
+interface SaveState {
+  state: GameState;
+}
 
-  const [state, setState] = useState<GameState>(initState);
+export function DotsBoxesGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
+  const colors = useTheme();
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused]);
+
+  const { save, load, clear } = usePersistentGameState<SaveState>('dots-boxes');
+
+  const [state, setState] = useState<GameState>(() => initState());
   const [done, setDone] = useState(false);
+
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SaveState | null>(null);
 
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Mount effect: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    (async () => {
+      const result = await load();
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        timer.start();
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Save effect
+  useEffect(() => {
+    if (!done && !showResumeModal) {
+      save({ state }, timer.elapsedSeconds);
+    }
+  }, [state, timer.elapsedSeconds, done, showResumeModal, save]);
+
+  const handleResume = useCallback(() => {
+    if (pendingSavedState) {
+      setState(pendingSavedState.state);
+    }
+    setShowResumeModal(false);
+    timer.restoreAndResume(resumeElapsed);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    clear();
+    setState(initState());
+    setShowResumeModal(false);
+    timer.start();
+  }, [clear, timer]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    timer.pause();
+    clear();
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, timer, clear]);
 
   const applyMove = useCallback((st: GameState, type: 'h' | 'v', r: number, c: number): GameState => {
     const newH = st.hLines.map(row => [...row]);
@@ -116,7 +166,6 @@ export function DotsBoxesGame({ onComplete, onBack }: Props) {
     const newScores: [number, number] = [...st.scores] as [number, number];
     if (st.turn === 'player') newScores[0] += scored;
     else newScores[1] += scored;
-    const totalBoxes = N * N;
     const newTurn = scored > 0 ? st.turn : (st.turn === 'player' ? 'ai' : 'player');
     return { hLines: newH, vLines: newV, boxes: newBoxes, scores: newScores, turn: newTurn };
   }, []);
@@ -152,6 +201,16 @@ export function DotsBoxesGame({ onComplete, onBack }: Props) {
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="◼️"
+        gameName="Dots & Boxes"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `You ${pendingSavedState.state.scores[0]} · AI ${pendingSavedState.state.scores[1]}` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <View style={s.scoreRow}>
         <Text style={s.scoreYou}>You: {state.scores[0]}</Text>
         <Text style={s.title}>Dots & Boxes</Text>
@@ -231,10 +290,9 @@ export function DotsBoxesGame({ onComplete, onBack }: Props) {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
-              setDone(false); completedRef.current = false;
+              setDone(false);
               setState(initState());
-              elapsedRef.current = 0;
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Play Again</Text>
             </TouchableOpacity>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Modal, Dimensions,
 } from 'react-native';
@@ -8,6 +8,7 @@ import { generateQuestions } from './generator';
 import type { Question } from './types';
 import * as Haptics from 'expo-haptics';
 import { playSound } from '../../audio/sounds';
+import { useGameTimer } from '../../hooks/useGameTimer';
 
 type Difficulty = 'easy' | 'medium' | 'hard';
 
@@ -18,38 +19,45 @@ const PENALTY = 10;
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  paused?: boolean;
 }
 
-export function MathSprintGame({ onComplete, onBack }: Props) {
+export function MathSprintGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused]);
+
+
   const [difficulty, setDifficulty] = useState<Difficulty>('medium');
-  const [questions, setQuestions] = useState(() => generateQuestions('medium'));
-  const [idx, setIdx] = useState(0);
+  const [questions, setQuestions] = useState<Question[]>(() => generateQuestions('medium'));
+  const [idx, setIdx] = useState<number>(0);
   const [input, setInput] = useState('');
-  const [correct, setCorrect] = useState(0);
-  const [wrong, setWrong] = useState(0);
+  const [correct, setCorrect] = useState<number>(0);
+  const [wrong, setWrong] = useState<number>(0);
   const [flash, setFlash] = useState<'correct' | 'wrong' | null>(null);
   const [done, setDone] = useState(false);
 
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
-
+  // Mount effect: start timer immediately (no save/resume for math sprint)
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    timer.start();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const finish = useCallback(() => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+  const finish = useCallback((finalCorrect: number) => {
+    timer.pause();
+    const won = finalCorrect / questions.length >= 0.7;
     setDone(true);
-    playSound('win');
-    onComplete(true, elapsedRef.current);
-  }, [onComplete]);
+    playSound(won ? 'win' : 'lose');
+    onComplete(won, timer.elapsedSeconds);
+  }, [onComplete, questions.length, timer]);
 
   const submit = useCallback(() => {
     if (!input) return;
@@ -62,19 +70,19 @@ export function MathSprintGame({ onComplete, onBack }: Props) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } else {
       setWrong(w => w + 1);
-      elapsedRef.current += PENALTY;
       setFlash('wrong');
       playSound('absent');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     }
     setTimeout(() => setFlash(null), 350);
     setInput('');
+    const newCorrect = userAns === q.answer ? correct + 1 : correct;
     if (idx + 1 >= questions.length) {
-      setTimeout(finish, 400);
+      setTimeout(() => finish(newCorrect), 400);
     } else {
       setIdx(i => i + 1);
     }
-  }, [input, idx, questions, finish]);
+  }, [input, idx, questions, correct, finish]);
 
   const pressKey = useCallback((key: string) => {
     if (key === '⌫') {
@@ -170,14 +178,12 @@ export function MathSprintGame({ onComplete, onBack }: Props) {
               style={[s.btn, { backgroundColor: colors.ink }]}
               onPress={() => {
                 setDone(false);
-                completedRef.current = false;
                 setIdx(0);
                 setInput('');
                 setCorrect(0);
                 setWrong(0);
-                elapsedRef.current = 0;
                 setQuestions(generateQuestions(difficulty));
-                timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+                timer.start();
               }}
               activeOpacity={0.8}
             >

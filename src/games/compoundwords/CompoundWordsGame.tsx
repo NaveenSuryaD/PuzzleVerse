@@ -1,13 +1,22 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 import { fonts } from '../../theme/typography';
 import { COMPOUND_PAIRS } from './puzzles';
 import * as Haptics from 'expo-haptics';
+import { useGameTimer } from '../../hooks/useGameTimer';
+import { usePersistentGameState } from '../../hooks/usePersistentGameState';
+import { ResumeGameModal } from '../../components/ResumeGameModal';
 
 interface Props {
   onComplete: (won: boolean, timeSeconds: number) => void;
   onBack?: () => void;
+  paused?: boolean;
+}
+
+interface SaveState {
+  round: number;
+  score: number;
 }
 
 function shuffle<T>(arr: T[]): T[] {
@@ -29,35 +38,79 @@ function buildRound(usedIndices: Set<number>) {
   return { idx, puzzle: correct, choices };
 }
 
-export function CompoundWordsGame({ onComplete, onBack }: Props) {
+export function CompoundWordsGame({ onComplete, onBack,
+  paused = false,
+}: Props) {
   const colors = useTheme();
-  const elapsedRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedRef = useRef(false);
+  const timer = useGameTimer();
+  useEffect(() => {
+    if (paused) timer.pause();
+    else timer.resume();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused]);
 
-  const [round, setRound] = useState(1);
-  const [score, setScore] = useState(0);
+  const { save, load, clear } = usePersistentGameState<SaveState>('compound-words');
+
+  const [round, setRound] = useState<number>(1);
+  const [score, setScore] = useState<number>(0);
   const [usedIndices] = useState(() => new Set<number>());
   const [current, setCurrent] = useState(() => buildRound(new Set<number>()));
   const [selected, setSelected] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [won, setWon] = useState(false);
 
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeElapsed, setResumeElapsed] = useState(0);
+  const [pendingSavedState, setPendingSavedState] = useState<SaveState | null>(null);
+
   const s = useMemo(() => makeStyles(colors), [colors]);
 
+  // Mount: load saved state
   useEffect(() => {
-    timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    load().then(result => {
+      if (result.found && result.gameState) {
+        setPendingSavedState(result.gameState);
+        setResumeElapsed(result.elapsedSeconds);
+        setShowResumeModal(true);
+      } else {
+        timer.start();
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Save on meaningful changes
+  useEffect(() => {
+    if (!done && timer.isRunning) {
+      save({ round, score }, timer.elapsedSeconds);
+    }
+  }, [round, score]);
+
+  const handleResume = useCallback(() => {
+    if (!pendingSavedState) return;
+    setRound(pendingSavedState.round);
+    setScore(pendingSavedState.score);
+    setShowResumeModal(false);
+    timer.restoreAndResume(resumeElapsed);
+  }, [pendingSavedState, resumeElapsed, timer]);
+
+  const handleStartFresh = useCallback(() => {
+    clear();
+    setRound(1);
+    setScore(0);
+    usedIndices.clear();
+    setCurrent(buildRound(new Set<number>()));
+    setShowResumeModal(false);
+    timer.start();
+  }, [clear, timer, usedIndices]);
+
   const finish = useCallback((w: boolean) => {
-    if (completedRef.current) return;
-    completedRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    clear();
+    timer.pause();
     setWon(w);
     setDone(true);
-    onComplete(w, elapsedRef.current);
-  }, [onComplete]);
+    onComplete(w, timer.elapsedSeconds);
+  }, [onComplete, clear, timer]);
 
   const handleChoice = useCallback((choice: string) => {
     if (selected !== null || !current) return;
@@ -86,6 +139,16 @@ export function CompoundWordsGame({ onComplete, onBack }: Props) {
 
   return (
     <View style={s.container}>
+      <ResumeGameModal
+        visible={showResumeModal}
+        gameEmoji="🧩"
+        gameName="Compound Words"
+        elapsedSeconds={resumeElapsed}
+        progressSummary={pendingSavedState ? `Round ${pendingSavedState.round} / 10 · Score: ${pendingSavedState.score}` : undefined}
+        onResume={handleResume}
+        onStartFresh={handleStartFresh}
+      />
+
       <Text style={s.round}>Round {round} / 10</Text>
 
       <View style={s.partsRow}>
@@ -144,15 +207,13 @@ export function CompoundWordsGame({ onComplete, onBack }: Props) {
             )}
             <TouchableOpacity style={s.modalBtn} onPress={() => {
               setDone(false);
-              completedRef.current = false;
               setRound(1);
               setScore(0);
-              elapsedRef.current = 0;
               usedIndices.clear();
               const next = buildRound(usedIndices);
               setCurrent(next);
               setSelected(null);
-              timerRef.current = setInterval(() => { elapsedRef.current += 1; }, 1000);
+              timer.start();
             }}>
               <Text style={s.modalBtnText}>Play Again</Text>
             </TouchableOpacity>
