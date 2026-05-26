@@ -48,7 +48,7 @@ export function useSaveGame(
   };
 
   // Save immediately on every state change (skip first render — only save after user acts)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   useEffect(() => {
     if (isFirstRenderRef.current) {
       isFirstRenderRef.current = false;

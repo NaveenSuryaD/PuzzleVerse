@@ -1,6 +1,6 @@
 export interface FlagDesign {
   country: string;
-  stripes: Array<{ color: string; flex: number }>;
+  stripes: { color: string; flex: number }[];
   direction: 'horizontal' | 'vertical';
   emblem?: string;
 }

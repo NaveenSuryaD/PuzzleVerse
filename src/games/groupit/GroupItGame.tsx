@@ -221,7 +221,7 @@ export const GroupItGame: React.FC<GroupItGameProps> = ({ onComplete, onBack, pa
   const [showComplete, setShowComplete] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   // Each entry is tier for a correct guess, null for wrong
-  const [guessHistory, setGuessHistory] = useState<Array<Tier | null>>([]);
+  const [guessHistory, setGuessHistory] = useState<(Tier | null)[]>([]);
 
   const initNewGame = useCallback((p: Puzzle) => {
     setPuzzle(p);

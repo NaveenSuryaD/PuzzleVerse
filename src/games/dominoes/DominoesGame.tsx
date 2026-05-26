@@ -32,7 +32,7 @@ const ROWS = PUZZLE.length, COLS = PUZZLE[0].length;
 const CELL = 44;
 
 interface SaveState {
-  pairs: Array<[[number,number],[number,number]]>;
+  pairs: [[number,number],[number,number]][];
 }
 
 export function DominoesGame({ onComplete, onBack,
@@ -49,7 +49,7 @@ export function DominoesGame({ onComplete, onBack,
   const { save, load, clear } = usePersistentGameState<SaveState>('dominoes');
 
   const [selected, setSelected] = useState<[number, number] | null>(null);
-  const [pairs, setPairs] = useState<Array<[[number,number],[number,number]]>>([]);
+  const [pairs, setPairs] = useState<[[number,number],[number,number]][]>([]);
   const [done, setDone] = useState(false);
 
   const [showResumeModal, setShowResumeModal] = useState(false);

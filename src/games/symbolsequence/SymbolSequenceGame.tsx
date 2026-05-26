@@ -16,7 +16,7 @@ interface Props {
 
 type IconName = 'star' | 'heart' | 'moon' | 'sunny' | 'flash' | 'diamond';
 
-const SYMBOLS: Array<{ icon: IconName; color: string }> = [
+const SYMBOLS: { icon: IconName; color: string }[] = [
   { icon: 'star', color: '#F1C40F' },
   { icon: 'heart', color: '#E74C3C' },
   { icon: 'moon', color: '#9B59B6' },

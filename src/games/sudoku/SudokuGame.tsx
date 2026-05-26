@@ -416,7 +416,7 @@ export const SudokuGame: React.FC<SudokuGameProps> = ({
       setGenerating(false);
       timer.start();
     }, 60);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [clear, timer]);
 
   const gridAnimStyle = useAnimatedStyle(() => ({

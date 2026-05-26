@@ -72,7 +72,7 @@ function aiMove(state: GameState): { type: 'h' | 'v'; r: number; c: number } {
     }
   }
   // Random
-  const moves: Array<{ type: 'h' | 'v'; r: number; c: number }> = [];
+  const moves: { type: 'h' | 'v'; r: number; c: number }[] = [];
   for (let r = 0; r <= N; r++) {
     for (let c = 0; c < N; c++) {
       if (!state.hLines[r][c]) moves.push({ type: 'h', r, c });

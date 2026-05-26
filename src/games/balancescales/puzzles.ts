@@ -1,8 +1,8 @@
 export interface ScalePuzzle {
-  equations: Array<{
-    left: Array<{ shape: 'circle' | 'square' | 'triangle'; count: number }>;
-    right: Array<{ shape: 'circle' | 'square' | 'triangle'; count: number }>;
-  }>;
+  equations: {
+    left: { shape: 'circle' | 'square' | 'triangle'; count: number }[];
+    right: { shape: 'circle' | 'square' | 'triangle'; count: number }[];
+  }[];
   question: 'circle' | 'square' | 'triangle';
   answer: number;
   choices: number[];
