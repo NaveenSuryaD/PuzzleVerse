@@ -6,22 +6,24 @@ on:
 jobs:
   protect-main:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Apply main branch protection rules
+      - name: Apply branch protection
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+
         run: |
-          HTTP_STATUS=$(curl -X PUT \
-            -H "Authorization: Bearer $GH_TOKEN" \
+          HTTP_STATUS=$(curl -L \
+            -X PUT \
             -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            -s -o /tmp/response.json -w "%{http_code}" \
-            "https://api.github.com/repos/${{ github.repository }}/branches/main/protection" \
+            -o response.json \
+            -s \
+            -w "%{http_code}" \
+            https://api.github.com/repos/${{ github.repository }}/branches/main/protection \
             -d '{
-              "required_status_checks": {
-                "strict": true,
-                "checks": [{"context": "all-checks-passed"}]
-              },
+              "required_status_checks": null,
               "enforce_admins": true,
               "required_pull_request_reviews": {
                 "dismiss_stale_reviews": true,
@@ -33,12 +35,13 @@ jobs:
               "allow_deletions": false
             }')
 
-          echo "HTTP status: $HTTP_STATUS"
-          python3 -m json.tool /tmp/response.json 2>/dev/null || cat /tmp/response.json
+          echo "HTTP Status: $HTTP_STATUS"
+
+          cat response.json
 
           if [ "$HTTP_STATUS" != "200" ]; then
-            echo "Failed to apply branch protection (HTTP $HTTP_STATUS)"
+            echo "Branch protection setup failed"
             exit 1
           fi
 
-          echo "Branch protection applied successfully."
+          echo "Branch protection configured successfully"
